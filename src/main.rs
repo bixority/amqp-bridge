@@ -42,7 +42,7 @@ struct MessageBridge {
 }
 
 impl MessageBridge {
-    /// Attempts to connect to a RabbitMQ instance,
+    /// Attempts to connect to a `RabbitMQ` instance,
     /// retrying up to 10 times with exponential backoff.
     async fn connect_with_retry(dsn: &str, context_msg: &str) -> Result<Connection> {
         const MAX_RETRIES: u8 = 10;
