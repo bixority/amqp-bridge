@@ -1,12 +1,12 @@
 use crate::conf::Config;
 use crate::health::{HealthStatus, SharedHealthState};
-use anyhow::Context;
+use anyhow::{Context, Error};
 use futures::StreamExt;
 use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions, BasicQosOptions,
 };
 use lapin::types::FieldTable;
-use lapin::{Channel, Connection, ConnectionProperties};
+use lapin::{Channel, Connection, ConnectionProperties, Consumer};
 use std::time::Duration;
 use tokio::time;
 use tracing::{error, info, warn};
@@ -126,25 +126,7 @@ impl MessageBridge {
         state.last_message_processed = Some(std::time::Instant::now());
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
-        info!(
-            "Starting to consume from queue '{}'",
-            self.config.source_queue
-        );
-
-        let mut consumer = self
-            .source_channel
-            .basic_consume(
-                &self.config.source_queue,
-                "bridge_consumer",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await
-            .context("Failed to start consuming")?;
-
-        info!("Consumer started, waiting for messages...");
-
+    async fn consume(&self, mut consumer: Consumer) -> Result<(), Error> {
         while let Some(delivery_result) = consumer.next().await {
             // Check connection health before processing
             if !self.is_connected() {
@@ -245,6 +227,30 @@ impl MessageBridge {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        info!(
+            "Starting to consume from queue '{}'",
+            self.config.source_queue
+        );
+
+        let consumer = self
+            .source_channel
+            .basic_consume(
+                &self.config.source_queue,
+                "bridge_consumer",
+                BasicConsumeOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .context("Failed to start consuming")?;
+
+        info!("Consumer started, waiting for messages...");
+
+        self.consume(consumer).await?;
 
         warn!("Consumer stream ended");
         self.mark_unhealthy().await;
