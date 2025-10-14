@@ -1,2 +1,6 @@
-# amqp-bridge
-AMQP bridge for message re-transmitting from once server to another
+# AMQP bridge
+
+Run in compose file:
+```shell
+podman compose --env-file .env up --build --remove-orphans
+```

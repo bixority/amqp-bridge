@@ -1,0 +1,47 @@
+name: amqp-bridge
+
+services:
+  old-rabbitmq-service:
+    image: docker.io/rabbitmq:management
+    container_name: old-rabbitmq-service
+    environment:
+      RABBITMQ_ERLANG_COOKIE: 'secret_cookie'
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5671:5672"
+      - "15671:15672"
+    volumes:
+      - ./.docker/rabbitmq_init.sh:/rabbitmq_init.sh
+    command: [ "bash", "-c", "/rabbitmq_init.sh" ]
+
+  new-rabbitmq-service:
+    image: docker.io/rabbitmq:management
+    container_name: new-rabbitmq-service
+    environment:
+      RABBITMQ_ERLANG_COOKIE: 'secret_cookie'
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./.docker/rabbitmq_init.sh:/rabbitmq_init.sh
+    command: ["bash", "-c", "/rabbitmq_init.sh" ]
+
+  amqp-bridge:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    image: amqp-bridge
+    container_name: amqp-bridge
+    environment:
+      SOURCE_DSN: "${SOURCE_DSN:-amqp://guest:guest@old-rabbitmq-service:5672/}"
+      SOURCE_QUEUE: "${SOURCE_QUEUE:-queue_a}"
+      TARGET_DSN: "${TARGET_DSN:-amqp://guest:guest@new-rabbitmq-service:5672/}"
+      TARGET_EXCHANGE: "${TARGET_EXCHANGE:-xchg_queues}"
+      TARGET_ROUTING_KEY: "${TARGET_ROUTING_KEY:-route_b}"
+      RUST_LOG: info
+    depends_on:
+      - old-rabbitmq-service
+      - new-rabbitmq-service
