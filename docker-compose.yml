@@ -42,6 +42,8 @@ services:
       TARGET_EXCHANGE: "${TARGET_EXCHANGE:-xchg_queues}"
       TARGET_ROUTING_KEY: "${TARGET_ROUTING_KEY:-route_b}"
       RUST_LOG: info
+    ports:
+      - "8080:8080"
     depends_on:
       - old-rabbitmq-service
       - new-rabbitmq-service
