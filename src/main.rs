@@ -7,7 +7,6 @@ use lapin::options::{
 use lapin::{Channel, Connection, ConnectionProperties, types::FieldTable};
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
-// Required for async sleep operations
 
 #[derive(Debug)]
 struct Config {
@@ -37,46 +36,52 @@ impl Config {
 struct MessageBridge {
     source_channel: Channel,
     target_channel: Channel,
+    source_connection: Connection,
+    target_connection: Connection,
     config: Config,
 }
 
 impl MessageBridge {
-    /// Attempts to connect to a RabbitMQ instance, retrying up to 10 times with a 5-second delay.
+    /// Attempts to connect to a RabbitMQ instance,
+    /// retrying up to 10 times with exponential backoff.
     async fn connect_with_retry(dsn: &str, context_msg: &str) -> Result<Connection> {
         const MAX_RETRIES: u8 = 10;
-        const RETRY_DELAY: Duration = Duration::from_secs(5);
+        const INITIAL_DELAY: Duration = Duration::from_secs(1);
+        const MAX_DELAY: Duration = Duration::from_secs(30);
+
+        let mut delay = INITIAL_DELAY;
 
         for attempt in 1..=MAX_RETRIES {
             info!(
-                "Attempting connection to RabbitMQ ({}) - attempt {}/{}",
-                dsn, attempt, MAX_RETRIES
+                "Attempting connection to RabbitMQ - attempt {}/{}",
+                attempt, MAX_RETRIES
             );
 
-            // Attempt to connect
             match Connection::connect(dsn, ConnectionProperties::default()).await {
                 Ok(conn) => {
-                    info!("Successfully connected on attempt {}", attempt);
+                    info!("Successfully connected on attempt {attempt}");
                     return Ok(conn);
                 }
                 Err(e) => {
-                    warn!("{}: Failed on attempt {}: {}", context_msg, attempt, e);
+                    warn!("{context_msg}: Failed on attempt {attempt}: {e}");
+
                     if attempt < MAX_RETRIES {
-                        // Wait for 5 seconds before the next retry
-                        time::sleep(RETRY_DELAY).await;
+                        info!("Waiting {:?} before retry...", delay);
+
+                        time::sleep(delay).await;
+                        // Exponential backoff, capped at MAX_DELAY
+                        delay = std::cmp::min(delay * 2, MAX_DELAY);
                     } else {
-                        // All attempts failed, return the final error
                         return Err(e)
                             .context(format!("{context_msg} after {MAX_RETRIES} attempts"));
                     }
                 }
             }
         }
-        // Should be unreachable if logic is sound, but provides a fallback error.
         Err(anyhow::anyhow!("Exhausted all connection retries."))
     }
 
     async fn new(config: Config) -> Result<Self> {
-        // Use the retry logic for the source connection
         let source_conn =
             Self::connect_with_retry(&config.source_dsn, "Failed to connect to source RabbitMQ")
                 .await?;
@@ -86,7 +91,6 @@ impl MessageBridge {
             .await
             .context("Failed to create source channel")?;
 
-        // Use the retry logic for the target connection
         let target_conn =
             Self::connect_with_retry(&config.target_dsn, "Failed to connect to target RabbitMQ")
                 .await?;
@@ -96,7 +100,6 @@ impl MessageBridge {
             .await
             .context("Failed to create target channel")?;
 
-        // Set QoS to process one message at a time
         source_channel
             .basic_qos(1, BasicQosOptions::default())
             .await
@@ -107,8 +110,15 @@ impl MessageBridge {
         Ok(Self {
             source_channel,
             target_channel,
+            source_connection: source_conn,
+            target_connection: target_conn,
             config,
         })
+    }
+
+    /// Check if connections are still alive
+    fn is_connected(&self) -> bool {
+        self.source_connection.status().connected() && self.target_connection.status().connected()
     }
 
     async fn run(&self) -> Result<()> {
@@ -131,15 +141,35 @@ impl MessageBridge {
         info!("Consumer started, waiting for messages...");
 
         while let Some(delivery_result) = consumer.next().await {
+            // Check connection health before processing
+            if !self.is_connected() {
+                error!("Connection lost, stopping consumer loop");
+                return Err(anyhow::anyhow!("Connection lost during message processing"));
+            }
+
             match delivery_result {
                 Ok(delivery) => {
                     let data = delivery.data.clone();
                     let properties = delivery.properties.clone();
 
+                    // Try to convert message to string for logging
+                    let message_preview = match std::str::from_utf8(&data) {
+                        Ok(s) => {
+                            // Truncate if too long
+                            if s.len() > 200 {
+                                format!("{}...", &s[..200])
+                            } else {
+                                s.to_string()
+                            }
+                        }
+                        Err(_) => format!("<binary data, {} bytes>", data.len()),
+                    };
+
                     info!(
-                        "Received message: {} bytes, delivery_tag: {}",
+                        "Received message: {} bytes, delivery_tag: {}, content: {}",
                         data.len(),
-                        delivery.delivery_tag
+                        delivery.delivery_tag,
+                        message_preview
                     );
 
                     // Publish to target
@@ -160,14 +190,14 @@ impl MessageBridge {
                                 Ok(_) => {
                                     info!("Successfully published message to target");
 
-                                    // Acknowledge the source message only after successful publish
                                     if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
-                                        error!("Failed to acknowledge message: {}", e);
+                                        error!("Failed to acknowledge message: {e}");
+                                        // Connection might be lost
+                                        return Err(anyhow::anyhow!("Failed to ack: {e}"));
                                     }
                                 }
                                 Err(e) => {
                                     error!("Publisher confirmation failed: {}", e);
-                                    // Reject and requeue the message
                                     if let Err(e) = delivery
                                         .nack(BasicNackOptions {
                                             requeue: true,
@@ -175,14 +205,15 @@ impl MessageBridge {
                                         })
                                         .await
                                     {
-                                        error!("Failed to nack message: {}", e);
+                                        error!("Failed to nack message: {e}");
+                                        return Err(anyhow::anyhow!("Failed to nack: {e}"));
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Failed to publish message: {}", e);
-                            // Reject and requeue the message
+                            error!("Failed to publish message: {e}",);
+
                             if let Err(e) = delivery
                                 .nack(BasicNackOptions {
                                     requeue: true,
@@ -190,21 +221,70 @@ impl MessageBridge {
                                 })
                                 .await
                             {
-                                error!("Failed to nack message: {}", e);
+                                error!("Failed to nack message: {e}");
+                                return Err(anyhow::anyhow!("Failed to nack: {e}"));
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Error receiving message: {}", e);
-                    // This is the consumer stream error, adding a small backoff before trying to consume the next message.
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    error!("Error receiving message: {e}");
+                    // Consumer error might indicate connection loss
+                    return Err(anyhow::anyhow!("Consumer error: {e}"));
                 }
             }
         }
 
         warn!("Consumer stream ended");
-        Ok(())
+        Err(anyhow::anyhow!("Consumer stream ended unexpectedly"))
+    }
+}
+
+async fn run_with_recovery(config: Config) -> Result<()> {
+    const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+    loop {
+        info!("Creating message bridge...");
+
+        match MessageBridge::new(config.clone()).await {
+            Ok(bridge) => {
+                info!("Bridge created successfully, starting message processing");
+
+                match bridge.run().await {
+                    Ok(()) => {
+                        warn!("Bridge stopped normally (unexpected)");
+                    }
+                    Err(e) => {
+                        error!("Bridge encountered an error: {e}");
+                    }
+                }
+
+                info!(
+                    "Connection lost or error occurred, will attempt to reconnect in {:?}",
+                    RECONNECT_DELAY
+                );
+            }
+            Err(e) => {
+                error!("Failed to create bridge: {e}");
+                info!("Will retry in {:?}", RECONNECT_DELAY);
+            }
+        }
+
+        time::sleep(RECONNECT_DELAY).await;
+        info!("Attempting to reconnect...");
+    }
+}
+
+// Make Config cloneable for recovery loop
+impl Clone for Config {
+    fn clone(&self) -> Self {
+        Self {
+            source_dsn: self.source_dsn.clone(),
+            source_queue: self.source_queue.clone(),
+            target_dsn: self.target_dsn.clone(),
+            target_exchange: self.target_exchange.clone(),
+            target_routing_key: self.target_routing_key.clone(),
+        }
     }
 }
 
@@ -221,7 +301,7 @@ async fn main() -> Result<()> {
     // Load environment variables from .env file if present
     let _ = dotenvy::dotenv();
 
-    info!("Starting RabbitMQ message bridge");
+    info!("Starting RabbitMQ message bridge with auto-recovery");
 
     let config = Config::from_env().context("Failed to load configuration")?;
 
@@ -230,15 +310,11 @@ async fn main() -> Result<()> {
     info!("  Target exchange: {}", config.target_exchange);
     info!("  Target routing key: {}", config.target_routing_key);
 
-    let bridge = MessageBridge::new(config)
-        .await
-        .context("Failed to initialize message bridge")?;
-
     // Handle graceful shutdown
     let shutdown = tokio::signal::ctrl_c();
     tokio::select! {
-        result = bridge.run() => {
-            result.context("Bridge encountered an error")?;
+        result = run_with_recovery(config) => {
+            result.context("Recovery loop failed")?;
         }
         _ = shutdown => {
             info!("Received shutdown signal, exiting gracefully");
