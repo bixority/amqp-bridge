@@ -23,36 +23,80 @@ pub struct MessageBridge {
 impl MessageBridge {
     /// Attempts to connect to a `RabbitMQ` instance,
     /// retrying up to 10 times with exponential backoff.
-    async fn connect_with_retry(dsn: &str, context_msg: &str) -> anyhow::Result<Connection> {
+    async fn connect_with_retry(uri: &str, context_msg: &str) -> anyhow::Result<Connection> {
         const MAX_RETRIES: u8 = 10;
         const INITIAL_DELAY: Duration = Duration::from_secs(1);
         const MAX_DELAY: Duration = Duration::from_secs(30);
 
         let mut delay = INITIAL_DELAY;
 
+        // Parse and display connection details (without password)
+        let sanitized_uri = sanitize_uri_for_logging(uri);
+        info!("Connecting to: {}", sanitized_uri);
+
         for attempt in 1..=MAX_RETRIES {
             info!(
-                "Attempting connection to RabbitMQ - attempt {}/{}",
-                attempt, MAX_RETRIES
+                "{} - Attempt {}/{}: Connecting to {}",
+                context_msg, attempt, MAX_RETRIES, sanitized_uri
             );
 
-            match Connection::connect(dsn, ConnectionProperties::default()).await {
+            match Connection::connect(uri, ConnectionProperties::default()).await {
                 Ok(conn) => {
-                    info!("Successfully connected on attempt {attempt}");
+                    info!(
+                        "✓ Successfully connected to {} on attempt {}",
+                        sanitized_uri, attempt
+                    );
                     return Ok(conn);
                 }
                 Err(e) => {
-                    warn!("{context_msg}: Failed on attempt {attempt}: {e}");
+                    // Enhanced error logging with detailed information
+                    error!(
+                        "✗ {}: Connection failed on attempt {}/{}",
+                        context_msg, attempt, MAX_RETRIES
+                    );
+                    error!("  URI: {}", sanitized_uri);
+                    error!("  Error type: {:?}", e);
+                    error!("  Error message: {}", e);
+
+                    // Check for specific error types
+                    let error_string = format!("{e:?}");
+                    if error_string.contains("ConnectionRefused")
+                        || error_string.contains("Connection refused")
+                    {
+                        error!("  → Connection refused: RabbitMQ is not accepting connections");
+                        error!("    Possible causes:");
+                        error!("      • RabbitMQ service is not running");
+                        error!("      • Wrong host or port in DSN");
+                        error!("      • Firewall blocking the connection");
+                        error!("      • RabbitMQ not listening on the specified interface");
+                    } else if error_string.contains("timeout") || error_string.contains("Timeout") {
+                        error!("  → Connection timeout: No response from RabbitMQ server");
+                    } else if error_string.contains("auth") || error_string.contains("Auth") {
+                        error!("  → Authentication failed: Invalid credentials");
+                    } else if error_string.contains("resolution")
+                        || error_string.contains("resolve")
+                    {
+                        error!("  → DNS resolution failed: Cannot resolve hostname");
+                    }
+
+                    // Print additional error details
+                    if e.is_io_error() {
+                        error!("  I/O Error details: {e}");
+                    }
 
                     if attempt < MAX_RETRIES {
-                        info!("Waiting {:?} before retry...", delay);
-
+                        warn!("  ⏳ Retrying in {:?}...", delay);
                         time::sleep(delay).await;
                         // Exponential backoff, capped at MAX_DELAY
                         delay = std::cmp::min(delay * 2, MAX_DELAY);
                     } else {
-                        return Err(e)
-                            .context(format!("{context_msg} after {MAX_RETRIES} attempts"));
+                        error!(
+                            "✗ Failed to connect after {} attempts. Giving up.",
+                            MAX_RETRIES
+                        );
+                        return Err(e).context(format!(
+                            "{context_msg} after {MAX_RETRIES} attempts to {sanitized_uri}",
+                        ));
                     }
                 }
             }
@@ -68,18 +112,27 @@ impl MessageBridge {
             state.readiness = HealthStatus::Starting;
         }
 
+        info!("=== Starting MessageBridge initialization ===");
+        info!("Source queue: {}", config.source_queue);
+        info!("Target exchange: {}", config.target_exchange);
+        info!("Target routing key: {}", config.target_routing_key);
+
+        info!("--- Connecting to SOURCE RabbitMQ ---");
         let source_conn =
             Self::connect_with_retry(&config.source_dsn, "Failed to connect to source RabbitMQ")
-                .await?;
+                .await
+                .context("Source RabbitMQ connection failed")?;
 
         let source_channel = source_conn
             .create_channel()
             .await
             .context("Failed to create source channel")?;
 
+        info!("--- Connecting to TARGET RabbitMQ ---");
         let target_conn =
             Self::connect_with_retry(&config.target_dsn, "Failed to connect to target RabbitMQ")
-                .await?;
+                .await
+                .context("Target RabbitMQ connection failed")?;
 
         let target_channel = target_conn
             .create_channel()
@@ -91,7 +144,8 @@ impl MessageBridge {
             .await
             .context("Failed to set QoS")?;
 
-        info!("Successfully connected to both RabbitMQ instances");
+        info!("✓ Successfully connected to both RabbitMQ instances");
+        info!("=== MessageBridge initialization complete ===");
 
         // Mark as healthy after successful connection
         {
@@ -256,4 +310,22 @@ impl MessageBridge {
         self.mark_unhealthy().await;
         Err(anyhow::anyhow!("Consumer stream ended unexpectedly"))
     }
+}
+
+/// Helper function to sanitize URI for logging (removes password)
+fn sanitize_uri_for_logging(uri: &str) -> String {
+    if let Some(at_pos) = uri.find('@') {
+        if let Some(scheme_end) = uri.find("://") {
+            let scheme = &uri[..scheme_end + 3];
+            let after_at = &uri[at_pos..];
+
+            // Try to find username part
+            if let Some(colon_pos) = uri[scheme_end + 3..at_pos].find(':') {
+                let username = &uri[scheme_end + 3..scheme_end + 3 + colon_pos];
+                return format!("{scheme}{username}:***{after_at}");
+            }
+        }
+    }
+    // If parsing fails, return as-is (or you could return a generic message)
+    uri.to_string()
 }
