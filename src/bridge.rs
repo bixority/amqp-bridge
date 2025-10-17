@@ -32,67 +32,115 @@ impl MessageBridge {
 
         // Parse and display connection details (without password)
         let sanitized_uri = sanitize_uri_for_logging(uri);
-        info!("Connecting to: {}", sanitized_uri);
+
+        info!(
+            target = context_msg,
+            uri = %sanitized_uri,
+            "Starting connection attempts"
+        );
 
         for attempt in 1..=MAX_RETRIES {
             info!(
-                "{} - Attempt {}/{}: Connecting to {}",
-                context_msg, attempt, MAX_RETRIES, sanitized_uri
+                target = context_msg,
+                attempt = attempt,
+                max_retries = MAX_RETRIES,
+                uri = %sanitized_uri,
+                "Attempting connection"
             );
 
             match Connection::connect(uri, ConnectionProperties::default()).await {
                 Ok(conn) => {
                     info!(
-                        "✓ Successfully connected to {} on attempt {}",
-                        sanitized_uri, attempt
+                        target = context_msg,
+                        uri = %sanitized_uri,
+                        attempt = attempt,
+                        status = "success",
+                        "Successfully connected"
                     );
                     return Ok(conn);
                 }
                 Err(e) => {
-                    // Enhanced error logging with detailed information
-                    error!(
-                        "✗ {}: Connection failed on attempt {}/{}",
-                        context_msg, attempt, MAX_RETRIES
-                    );
-                    error!("  URI: {}", sanitized_uri);
-                    error!("  Error type: {:?}", e);
-                    error!("  Error message: {}", e);
-
-                    // Check for specific error types
                     let error_string = format!("{e:?}");
-                    if error_string.contains("ConnectionRefused")
+                    let error_message = format!("{e}");
+
+                    // Determine error category
+                    let error_category = if error_string.contains("ConnectionRefused")
                         || error_string.contains("Connection refused")
                     {
-                        error!("  → Connection refused: RabbitMQ is not accepting connections");
-                        error!("    Possible causes:");
-                        error!("      • RabbitMQ service is not running");
-                        error!("      • Wrong host or port in DSN");
-                        error!("      • Firewall blocking the connection");
-                        error!("      • RabbitMQ not listening on the specified interface");
+                        "connection_refused"
+                    } else if error_string.contains("ACCESSREFUSED")
+                        || error_string.contains("ACCESS_REFUSED")
+                    {
+                        "access_refused"
                     } else if error_string.contains("timeout") || error_string.contains("Timeout") {
-                        error!("  → Connection timeout: No response from RabbitMQ server");
-                    } else if error_string.contains("auth") || error_string.contains("Auth") {
-                        error!("  → Authentication failed: Invalid credentials");
+                        "timeout"
                     } else if error_string.contains("resolution")
                         || error_string.contains("resolve")
                     {
-                        error!("  → DNS resolution failed: Cannot resolve hostname");
-                    }
+                        "dns_resolution"
+                    } else {
+                        "unknown"
+                    };
 
-                    // Print additional error details
-                    if e.is_io_error() {
-                        error!("  I/O Error details: {e}");
+                    error!(
+                        target = context_msg,
+                        attempt = attempt,
+                        max_retries = MAX_RETRIES,
+                        uri = %sanitized_uri,
+                        error_type = error_category,
+                        error_message = %error_message,
+                        is_io_error = e.is_io_error(),
+                        "Connection failed"
+                    );
+
+                    // Log helpful hints based on error type
+                    match error_category {
+                        "connection_refused" => {
+                            warn!(
+                                target = context_msg,
+                                hint = "RabbitMQ service may not be running or firewall blocking",
+                                "Connection refused detected"
+                            );
+                        }
+                        "access_refused" => {
+                            warn!(
+                                target = context_msg,
+                                hint = "Check username, password, and vhost permissions",
+                                "Authentication failed"
+                            );
+                        }
+                        "timeout" => {
+                            warn!(
+                                target = context_msg,
+                                hint = "No response from RabbitMQ server",
+                                "Connection timeout"
+                            );
+                        }
+                        "dns_resolution" => {
+                            warn!(
+                                target = context_msg,
+                                hint = "Cannot resolve hostname",
+                                "DNS resolution failed"
+                            );
+                        }
+                        _ => {}
                     }
 
                     if attempt < MAX_RETRIES {
-                        warn!("  ⏳ Retrying in {:?}...", delay);
+                        warn!(
+                            target = context_msg,
+                            retry_delay_secs = delay.as_secs(),
+                            next_attempt = attempt + 1,
+                            "Retrying connection"
+                        );
                         time::sleep(delay).await;
-                        // Exponential backoff, capped at MAX_DELAY
                         delay = std::cmp::min(delay * 2, MAX_DELAY);
                     } else {
                         error!(
-                            "✗ Failed to connect after {} attempts. Giving up.",
-                            MAX_RETRIES
+                            target = context_msg,
+                            attempts = MAX_RETRIES,
+                            status = "failed",
+                            "Exhausted all connection retries"
                         );
                         return Err(e).context(format!(
                             "{context_msg} after {MAX_RETRIES} attempts to {sanitized_uri}",
@@ -112,27 +160,27 @@ impl MessageBridge {
             state.readiness = HealthStatus::Starting;
         }
 
-        info!("=== Starting MessageBridge initialization ===");
-        info!("Source queue: {}", config.source_queue);
-        info!("Target exchange: {}", config.target_exchange);
-        info!("Target routing key: {}", config.target_routing_key);
+        info!(
+            source_queue = %config.source_queue,
+            target_exchange = %config.target_exchange,
+            target_routing_key = %config.target_routing_key,
+            "Starting MessageBridge initialization"
+        );
 
-        info!("--- Connecting to SOURCE RabbitMQ ---");
-        let source_conn =
-            Self::connect_with_retry(&config.source_dsn, "Failed to connect to source RabbitMQ")
-                .await
-                .context("Source RabbitMQ connection failed")?;
+        info!("Connecting to SOURCE RabbitMQ");
+        let source_conn = Self::connect_with_retry(&config.source_dsn, "source_rabbitmq")
+            .await
+            .context("Source RabbitMQ connection failed")?;
 
         let source_channel = source_conn
             .create_channel()
             .await
             .context("Failed to create source channel")?;
 
-        info!("--- Connecting to TARGET RabbitMQ ---");
-        let target_conn =
-            Self::connect_with_retry(&config.target_dsn, "Failed to connect to target RabbitMQ")
-                .await
-                .context("Target RabbitMQ connection failed")?;
+        info!("Connecting to TARGET RabbitMQ");
+        let target_conn = Self::connect_with_retry(&config.target_dsn, "target_rabbitmq")
+            .await
+            .context("Target RabbitMQ connection failed")?;
 
         let target_channel = target_conn
             .create_channel()
@@ -144,8 +192,10 @@ impl MessageBridge {
             .await
             .context("Failed to set QoS")?;
 
-        info!("✓ Successfully connected to both RabbitMQ instances");
-        info!("=== MessageBridge initialization complete ===");
+        info!(
+            status = "initialized",
+            "Successfully connected to both RabbitMQ instances"
+        );
 
         // Mark as healthy after successful connection
         {
@@ -166,13 +216,30 @@ impl MessageBridge {
 
     /// Check if connections are still alive
     fn is_connected(&self) -> bool {
-        self.source_connection.status().connected() && self.target_connection.status().connected()
+        let source_connected = self.source_connection.status().connected();
+        let target_connected = self.target_connection.status().connected();
+
+        if !source_connected || !target_connected {
+            warn!(
+                source_connected = source_connected,
+                target_connected = target_connected,
+                "Connection status check"
+            );
+        }
+
+        source_connected && target_connected
     }
 
     async fn mark_unhealthy(&self) {
         let mut state = self.health_state.write().await;
         state.liveness = HealthStatus::Unhealthy;
         state.readiness = HealthStatus::Unhealthy;
+
+        error!(
+            liveness = "unhealthy",
+            readiness = "unhealthy",
+            "Marked bridge as unhealthy"
+        );
     }
 
     async fn update_message_timestamp(&self) {
@@ -193,25 +260,28 @@ impl MessageBridge {
                 Ok(delivery) => {
                     let data = delivery.data.clone();
                     let properties = delivery.properties.clone();
+                    let message_size = data.len();
+                    let delivery_tag = delivery.delivery_tag;
 
                     // Try to convert message to string for logging
                     let message_preview = match std::str::from_utf8(&data) {
                         Ok(s) => {
-                            // Truncate if too long
                             if s.len() > 200 {
                                 format!("{}...", &s[..200])
                             } else {
                                 s.to_string()
                             }
                         }
-                        Err(_) => format!("<binary data, {} bytes>", data.len()),
+                        Err(_) => format!("<binary data>"),
                     };
 
                     info!(
-                        "Received message: {} bytes, delivery_tag: {}, content: {}",
-                        data.len(),
-                        delivery.delivery_tag,
-                        message_preview
+                        event = "message_received",
+                        message_size = message_size,
+                        delivery_tag = delivery_tag,
+                        content_type = if std::str::from_utf8(&data).is_ok() { "text" } else { "binary" },
+                        preview = %message_preview,
+                        "Received message"
                     );
 
                     // Publish to target
@@ -230,10 +300,22 @@ impl MessageBridge {
                             // Wait for publisher confirmation
                             match confirm.await {
                                 Ok(_) => {
-                                    info!("Successfully published message to target");
+                                    info!(
+                                        event = "message_published",
+                                        delivery_tag = delivery_tag,
+                                        message_size = message_size,
+                                        exchange = %self.config.target_exchange,
+                                        routing_key = %self.config.target_routing_key,
+                                        "Successfully published message"
+                                    );
 
                                     if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
-                                        error!("Failed to acknowledge message: {e}");
+                                        error!(
+                                            event = "ack_failed",
+                                            delivery_tag = delivery_tag,
+                                            error = %e,
+                                            "Failed to acknowledge message"
+                                        );
                                         self.mark_unhealthy().await;
                                         return Err(anyhow::anyhow!("Failed to ack: {e}"));
                                     }
@@ -242,7 +324,13 @@ impl MessageBridge {
                                     self.update_message_timestamp().await;
                                 }
                                 Err(e) => {
-                                    error!("Publisher confirmation failed: {}", e);
+                                    error!(
+                                        event = "publish_confirmation_failed",
+                                        delivery_tag = delivery_tag,
+                                        error = %e,
+                                        "Publisher confirmation failed"
+                                    );
+
                                     if let Err(e) = delivery
                                         .nack(BasicNackOptions {
                                             requeue: true,
@@ -250,7 +338,12 @@ impl MessageBridge {
                                         })
                                         .await
                                     {
-                                        error!("Failed to nack message: {e}");
+                                        error!(
+                                            event = "nack_failed",
+                                            delivery_tag = delivery_tag,
+                                            error = %e,
+                                            "Failed to nack message"
+                                        );
                                         self.mark_unhealthy().await;
                                         return Err(anyhow::anyhow!("Failed to nack: {e}"));
                                     }
@@ -258,7 +351,14 @@ impl MessageBridge {
                             }
                         }
                         Err(e) => {
-                            error!("Failed to publish message: {e}",);
+                            error!(
+                                event = "publish_failed",
+                                delivery_tag = delivery_tag,
+                                exchange = %self.config.target_exchange,
+                                routing_key = %self.config.target_routing_key,
+                                error = %e,
+                                "Failed to publish message"
+                            );
 
                             if let Err(e) = delivery
                                 .nack(BasicNackOptions {
@@ -267,7 +367,12 @@ impl MessageBridge {
                                 })
                                 .await
                             {
-                                error!("Failed to nack message: {e}");
+                                error!(
+                                    event = "nack_failed",
+                                    delivery_tag = delivery_tag,
+                                    error = %e,
+                                    "Failed to nack message"
+                                );
                                 self.mark_unhealthy().await;
                                 return Err(anyhow::anyhow!("Failed to nack: {e}"));
                             }
@@ -275,7 +380,11 @@ impl MessageBridge {
                     }
                 }
                 Err(e) => {
-                    error!("Error receiving message: {e}");
+                    error!(
+                        event = "consumer_error",
+                        error = %e,
+                        "Error receiving message"
+                    );
                     self.mark_unhealthy().await;
                     return Err(anyhow::anyhow!("Consumer error: {e}"));
                 }
@@ -287,8 +396,10 @@ impl MessageBridge {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         info!(
-            "Starting to consume from queue '{}'",
-            self.config.source_queue
+            event = "consumer_starting",
+            queue = %self.config.source_queue,
+            consumer_tag = "bridge_consumer",
+            "Starting consumer"
         );
 
         let consumer = self
@@ -302,11 +413,18 @@ impl MessageBridge {
             .await
             .context("Failed to start consuming")?;
 
-        info!("Consumer started, waiting for messages...");
+        info!(
+            event = "consumer_started",
+            status = "waiting",
+            "Consumer started, waiting for messages"
+        );
 
         self.consume(consumer).await?;
 
-        warn!("Consumer stream ended");
+        warn!(
+            event = "consumer_ended",
+            "Consumer stream ended unexpectedly"
+        );
         self.mark_unhealthy().await;
         Err(anyhow::anyhow!("Consumer stream ended unexpectedly"))
     }
