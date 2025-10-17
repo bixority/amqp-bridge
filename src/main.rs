@@ -62,9 +62,6 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Load environment variables from .env file if present
-    let _ = dotenvy::dotenv();
-
     info!("Starting RabbitMQ message bridge with auto-recovery and health checks");
 
     let config = Config::from_env().context("Failed to load configuration")?;
