@@ -314,18 +314,20 @@ impl MessageBridge {
 
 /// Helper function to sanitize URI for logging (removes password)
 fn sanitize_uri_for_logging(uri: &str) -> String {
-    if let Some(at_pos) = uri.find('@') {
-        if let Some(scheme_end) = uri.find("://") {
-            let scheme = &uri[..scheme_end + 3];
-            let after_at = &uri[at_pos..];
+    // Attempt to parse the URI string into a structured Url object
+    let Ok(mut parsed_url) = url::Url::parse(uri) else {
+        return uri.to_string();
+    };
 
-            // Try to find username part
-            if let Some(colon_pos) = uri[scheme_end + 3..at_pos].find(':') {
-                let username = &uri[scheme_end + 3..scheme_end + 3 + colon_pos];
-                return format!("{scheme}{username}:***{after_at}");
-            }
-        }
+    // The Url object safely handles setting and clearing credentials.
+    // If a password exists, this method removes it while keeping the username.
+    if parsed_url.password().is_some() {
+        // This setter safely replaces the password component.
+        // If there is a username, it is preserved. If not, it's a no-op.
+        // We replace the password with a placeholder string.
+        let _ = parsed_url.set_password(Some("***"));
     }
-    // If parsing fails, return as-is (or you could return a generic message)
-    uri.to_string()
+
+    // Convert the modified Url object back to a String
+    parsed_url.to_string()
 }
