@@ -248,10 +248,16 @@ impl MessageBridge {
     }
 
     async fn consume(&self, mut consumer: Consumer) -> Result<(), Error> {
+        let mut message_count: u64 = 0;
+
         while let Some(delivery_result) = consumer.next().await {
             // Check connection health before processing
             if !self.is_connected() {
-                error!("Connection lost, stopping consumer loop");
+                error!(
+                    event = "connection_lost",
+                    messages_processed = message_count,
+                    "Connection lost, stopping consumer loop"
+                );
                 self.mark_unhealthy().await;
                 return Err(anyhow::anyhow!("Connection lost during message processing"));
             }
@@ -320,6 +326,8 @@ impl MessageBridge {
                                         return Err(anyhow::anyhow!("Failed to ack: {e}"));
                                     }
 
+                                    message_count += 1;
+
                                     // Update health timestamp after successful processing
                                     self.update_message_timestamp().await;
                                 }
@@ -383,6 +391,7 @@ impl MessageBridge {
                     error!(
                         event = "consumer_error",
                         error = %e,
+                        messages_processed = message_count,
                         "Error receiving message"
                     );
                     self.mark_unhealthy().await;
@@ -390,6 +399,12 @@ impl MessageBridge {
                 }
             }
         }
+
+        warn!(
+            event = "consumer_stream_ended",
+            messages_processed = message_count,
+            "Consumer stream ended"
+        );
 
         Ok(())
     }
