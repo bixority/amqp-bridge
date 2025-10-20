@@ -76,12 +76,13 @@ dependencies = [
 
 [[package]]
 name = "amqp-bridge"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "axum",
  "futures",
  "lapin",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
