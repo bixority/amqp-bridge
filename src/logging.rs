@@ -45,15 +45,14 @@ where
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         let created = now.as_secs_f64();
-        let msecs = (now.as_millis() % 1000) as f64;
+        let msecs = now.as_millis() % 1000;
 
         // Map tracing level to Python logging level
         let (levelname, levelno) = match *metadata.level() {
             tracing::Level::ERROR => ("ERROR", 40),
             tracing::Level::WARN => ("WARNING", 30),
             tracing::Level::INFO => ("INFO", 20),
-            tracing::Level::DEBUG => ("DEBUG", 10),
-            tracing::Level::TRACE => ("DEBUG", 10),
+            tracing::Level::DEBUG | tracing::Level::TRACE => ("DEBUG", 10),
         };
 
         // Get file, line, and module info
@@ -63,7 +62,7 @@ where
         let target = metadata.target();
 
         // Extract filename from path
-        let filename = file.split('/').last().unwrap_or(file);
+        let filename = file.split('/').next_back().unwrap_or(file);
 
         // Get thread info
         let thread = std::thread::current();
@@ -99,7 +98,7 @@ where
             "lineno": line,
             "funcName": metadata.name(),
             "created": created,
-            "msecs": msecs,
+            "msecs": msecs as u64,
             "thread": thread_id,
             "threadName": thread_name,
             "processName": "MainProcess",
@@ -124,10 +123,31 @@ struct FieldVisitor<'a> {
     message: &'a mut String,
 }
 
-impl<'a> tracing::field::Visit for FieldVisitor<'a> {
+impl tracing::field::Visit for FieldVisitor<'_> {
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        let name = field.name();
+        if name == "message" {
+            *self.message = value.to_string();
+        } else {
+            self.fields.insert(name.to_string(), json!(value));
+        }
+    }
+
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         let name = field.name();
-        let value_str = format!("{:?}", value);
+        let value_str = format!("{value:?}");
 
         // Special handling for 'message' field
         if name == "message" {
@@ -142,27 +162,6 @@ impl<'a> tracing::field::Visit for FieldVisitor<'a> {
                 self.fields.insert(name.to_string(), json!(clean_value));
             }
         }
-    }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        let name = field.name();
-        if name == "message" {
-            *self.message = value.to_string();
-        } else {
-            self.fields.insert(name.to_string(), json!(value));
-        }
-    }
-
-    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields.insert(field.name().to_string(), json!(value));
-    }
-
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields.insert(field.name().to_string(), json!(value));
-    }
-
-    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        self.fields.insert(field.name().to_string(), json!(value));
     }
 }
 
