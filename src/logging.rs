@@ -14,7 +14,7 @@ pub enum LogFormat {
 impl LogFormat {
     pub fn from_env() -> Self {
         match std::env::var("LOG_FORMAT")
-            .unwrap_or_else(|_| "pretty".to_string())
+            .unwrap_or_else(|_| "json".to_string())
             .to_lowercase()
             .as_str()
         {
