@@ -8,20 +8,17 @@ use tokio::sync::RwLock;
 
 use crate::bridge::MessageBridge;
 use crate::conf::Config;
-use crate::health::{run_health_server, HealthState, HealthStatus, SharedHealthState};
+use crate::health::{HealthState, HealthStatus, SharedHealthState, run_health_server};
+use crate::logging::{LogFormat, init_logging};
 use anyhow::{Context, Result};
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
-use crate::logging::{init_logging, LogFormat};
 
 async fn run_with_recovery(config: Config, health_state: SharedHealthState) -> Result<()> {
     const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
     loop {
-        info!(
-            event = "bridge_creating",
-            "Creating message bridge"
-        );
+        info!(event = "bridge_creating", "Creating message bridge");
 
         match MessageBridge::new(config.clone(), health_state.clone()).await {
             Ok(bridge) => {
@@ -70,10 +67,7 @@ async fn run_with_recovery(config: Config, health_state: SharedHealthState) -> R
         }
 
         time::sleep(RECONNECT_DELAY).await;
-        info!(
-            event = "reconnect_attempt",
-            "Attempting to reconnect"
-        );
+        info!(event = "reconnect_attempt", "Attempting to reconnect");
     }
 }
 
