@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{error, info};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HealthStatus {
@@ -38,16 +38,13 @@ async fn liveness_probe(State(health_state): State<SharedHealthState>) -> Status
     let state = health_state.read().await;
 
     match state.liveness {
-        HealthStatus::Healthy => {
-            info!("Liveness probe: healthy");
-            StatusCode::OK
-        }
+        HealthStatus::Healthy => StatusCode::OK,
         HealthStatus::Starting => {
             info!("Liveness probe: starting");
             StatusCode::OK // Allow pod to start
         }
         HealthStatus::Unhealthy => {
-            warn!("Liveness probe: unhealthy");
+            error!("Liveness probe: unhealthy");
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
@@ -57,12 +54,9 @@ async fn readiness_probe(State(health_state): State<SharedHealthState>) -> Statu
     let state = health_state.read().await;
 
     match state.readiness {
-        HealthStatus::Healthy => {
-            info!("Readiness probe: ready");
-            StatusCode::OK
-        }
+        HealthStatus::Healthy => StatusCode::OK,
         HealthStatus::Starting | HealthStatus::Unhealthy => {
-            warn!("Readiness probe: not ready");
+            error!("Readiness probe: not ready");
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
@@ -72,10 +66,7 @@ async fn startup_probe(State(health_state): State<SharedHealthState>) -> StatusC
     let state = health_state.read().await;
 
     match state.liveness {
-        HealthStatus::Healthy => {
-            info!("Startup probe: started");
-            StatusCode::OK
-        }
+        HealthStatus::Healthy => StatusCode::OK,
         HealthStatus::Starting | HealthStatus::Unhealthy => {
             info!("Startup probe: not started yet");
             StatusCode::SERVICE_UNAVAILABLE
