@@ -98,21 +98,21 @@ Source Queue → Message Bridge → Target Exchange
 3. Consumer errors: Mark unhealthy, trigger reconnection
 4. Publish failures: Nack with requeue
 
-## Docker
+## Podman
 
 ```bash
 # Build
-docker build -t amqp-bridge .
+podman build -t amqp-bridge .
 
 # Run
-docker run -d \
+podman run -d \
   -e SOURCE_DSN="amqp://user:pass@source:5672/%2f" \
   -e TARGET_DSN="amqp://user:pass@target:5672/%2f" \
   -p 8080:8080 \
   amqp-bridge
 ```
 
-### Docker Compose
+### Compose file
 
 ```bash
 podman compose --env-file .env up --build --remove-orphans
