@@ -1,6 +1,6 @@
 # AMQP Message Bridge
 
-A service that bridges messages between two RabbitMQ instances with automatic reconnection and health checks.
+A service that bridges messages between two AMQP instances with automatic reconnection and health checks.
 
 ## Features
 
@@ -16,7 +16,7 @@ A service that bridges messages between two RabbitMQ instances with automatic re
 ### Prerequisites
 
 - Rust 1.90+ (2024 edition)
-- Two RabbitMQ instances
+- Two AMQP instances
 
 ### Installation
 
@@ -145,7 +145,7 @@ RUST_LOG=debug cargo run
 ## Troubleshooting
 
 Check logs for error categories and hints:
-- **connection_refused**: Verify RabbitMQ is running and port is accessible
+- **connection_refused**: Verify AMQP is running and port is accessible
 - **access_refused**: Check credentials and permissions
 - **timeout**: Verify network connectivity
 - **dns_resolution**: Check hostname or use IP address
