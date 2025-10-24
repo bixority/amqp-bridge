@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     info!(
         event = "application_starting",
         log_format = ?log_format,
-        "Starting RabbitMQ message bridge with auto-recovery and health checks"
+        "Starting AMQP message bridge with auto-recovery and health checks"
     );
 
     let config = Config::from_env().context("Failed to load configuration")?;

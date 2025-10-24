@@ -48,7 +48,7 @@ impl MessageBridge {
             "connection_refused" => {
                 warn!(
                     target = context_msg,
-                    hint = "RabbitMQ service may not be running or firewall blocking",
+                    hint = "AMQP service may not be running or firewall blocking",
                     "Connection refused detected"
                 );
             }
@@ -62,7 +62,7 @@ impl MessageBridge {
             "timeout" => {
                 warn!(
                     target = context_msg,
-                    hint = "No response from RabbitMQ server",
+                    hint = "No response from AMQP server",
                     "Connection timeout"
                 );
             }
@@ -102,7 +102,7 @@ impl MessageBridge {
         Self::log_error_hint(error_category, context_msg);
     }
 
-    /// Attempts to connect to a `RabbitMQ` instance,
+    /// Attempts to connect to a `AMQP` instance,
     /// retrying up to 10 times with exponential backoff.
     async fn connect_with_retry(uri: &str, context_msg: &str) -> anyhow::Result<Connection> {
         const MAX_RETRIES: u8 = 10;
@@ -188,20 +188,20 @@ impl MessageBridge {
             "Starting MessageBridge initialization"
         );
 
-        info!("Connecting to SOURCE RabbitMQ");
-        let source_conn = Self::connect_with_retry(&config.source_dsn, "source_rabbitmq")
+        info!("Connecting to SOURCE AMQP");
+        let source_conn = Self::connect_with_retry(&config.source_dsn, "source_amqp")
             .await
-            .context("Source RabbitMQ connection failed")?;
+            .context("Source AMQP connection failed")?;
 
         let source_channel = source_conn
             .create_channel()
             .await
             .context("Failed to create source channel")?;
 
-        info!("Connecting to TARGET RabbitMQ");
-        let target_conn = Self::connect_with_retry(&config.target_dsn, "target_rabbitmq")
+        info!("Connecting to TARGET AMQP");
+        let target_conn = Self::connect_with_retry(&config.target_dsn, "target_amqp")
             .await
-            .context("Target RabbitMQ connection failed")?;
+            .context("Target AMQP connection failed")?;
 
         let target_channel = target_conn
             .create_channel()
@@ -215,7 +215,7 @@ impl MessageBridge {
 
         info!(
             status = "initialized",
-            "Successfully connected to both RabbitMQ instances"
+            "Successfully connected to both AMQP instances"
         );
 
         // Mark as healthy after successful connection
