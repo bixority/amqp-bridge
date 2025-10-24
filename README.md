@@ -1,6 +1,6 @@
 # AMQP Message Bridge
 
-A Rust service that bridges messages between two RabbitMQ instances with automatic reconnection and health checks.
+A service that bridges messages between two RabbitMQ instances with automatic reconnection and health checks.
 
 ## Features
 
