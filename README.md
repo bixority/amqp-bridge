@@ -102,14 +102,14 @@ Source Queue → Message Bridge → Target Exchange
 
 ```bash
 # Build
-docker build -t rabbitmq-bridge .
+docker build -t amqp-bridge .
 
 # Run
 docker run -d \
   -e SOURCE_DSN="amqp://user:pass@source:5672/%2f" \
   -e TARGET_DSN="amqp://user:pass@target:5672/%2f" \
   -p 8080:8080 \
-  rabbitmq-bridge
+  amqp-bridge
 ```
 
 ### Docker Compose
