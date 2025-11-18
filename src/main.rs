@@ -14,6 +14,9 @@ use anyhow::{Context, Result};
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 async fn run_with_recovery(config: Config, health_state: SharedHealthState) -> Result<()> {
     const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
