@@ -32,7 +32,7 @@ services:
   amqp-bridge:
     build:
       context: ./
-      dockerfile: Dockerfile
+      dockerfile: Containerfile
     image: amqp-bridge
     container_name: amqp-bridge
     environment:
