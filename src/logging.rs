@@ -194,3 +194,46 @@ pub fn init_logging(format: LogFormat) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_env() -> &'static Mutex<()> {
+        ENV_MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn unset_log_format() {
+        unsafe { std::env::remove_var("LOG_FORMAT") };
+    }
+
+    #[test]
+    fn default_is_python_json() {
+        let _g = lock_env().lock().unwrap();
+        unset_log_format();
+        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
+    }
+
+    #[test]
+    fn json_is_python_json_case_insensitive() {
+        let _g = lock_env().lock().unwrap();
+        unsafe { std::env::set_var("LOG_FORMAT", "JSON") };
+        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
+
+        unsafe { std::env::set_var("LOG_FORMAT", "json") };
+        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
+    }
+
+    #[test]
+    fn unknown_values_are_pretty() {
+        let _g = lock_env().lock().unwrap();
+        unsafe { std::env::set_var("LOG_FORMAT", "pretty") };
+        assert_eq!(LogFormat::from_env(), LogFormat::Pretty);
+
+        unsafe { std::env::set_var("LOG_FORMAT", "anything") };
+        assert_eq!(LogFormat::from_env(), LogFormat::Pretty);
+    }
+}

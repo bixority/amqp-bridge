@@ -514,3 +514,50 @@ fn sanitize_uri_for_logging(uri: &str) -> String {
 
     parsed_url.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_uri_hides_password() {
+        let uri = "amqp://user:secret@host:5672/vhost";
+        let sanitized = sanitize_uri_for_logging(uri);
+        assert!(!sanitized.contains("secret"));
+        assert!(sanitized.contains("***"));
+        assert!(sanitized.starts_with("amqp://user:"));
+    }
+
+    #[test]
+    fn sanitize_uri_without_password_unchanged() {
+        let uri = "amqp://user@host:5672/vhost";
+        let sanitized = sanitize_uri_for_logging(uri);
+        assert_eq!(sanitized, uri);
+    }
+
+    #[test]
+    fn sanitize_uri_handles_invalid_url() {
+        let uri = "not a url";
+        let sanitized = sanitize_uri_for_logging(uri);
+        assert_eq!(sanitized, uri);
+    }
+
+    #[test]
+    fn create_message_preview_limits_length_and_handles_binary() {
+        // UTF-8 long string
+        let long = "a".repeat(300);
+        let preview = MessageBridge::create_message_preview(long.as_bytes());
+        assert!(preview.len() <= 203, "preview too long: {}", preview.len());
+        assert!(preview.ends_with("..."));
+
+        // Short UTF-8 string
+        let short = "hello";
+        let preview = MessageBridge::create_message_preview(short.as_bytes());
+        assert_eq!(preview, short);
+
+        // Non-UTF8 bytes
+        let bin = &[0xFF, 0xFE, 0xFD];
+        let preview = MessageBridge::create_message_preview(bin);
+        assert_eq!(preview, "<binary data>");
+    }
+}
