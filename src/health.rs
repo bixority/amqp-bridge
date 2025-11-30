@@ -106,8 +106,15 @@ mod tests {
 
     #[tokio::test]
     async fn liveness_ok_for_starting_and_healthy() {
-        let st = shared(HealthState { liveness: HealthStatus::Starting, readiness: HealthStatus::Starting, last_message_processed: None });
-        assert_eq!(super::liveness_probe(State(st.clone())).await, StatusCode::OK);
+        let st = shared(HealthState {
+            liveness: HealthStatus::Starting,
+            readiness: HealthStatus::Starting,
+            last_message_processed: None,
+        });
+        assert_eq!(
+            super::liveness_probe(State(st.clone())).await,
+            StatusCode::OK
+        );
 
         {
             let mut w = st.write().await;
@@ -118,15 +125,25 @@ mod tests {
 
     #[tokio::test]
     async fn liveness_unhealthy_returns_503() {
-        let st = shared(HealthState { liveness: HealthStatus::Unhealthy, readiness: HealthStatus::Unhealthy, last_message_processed: None });
-        assert_eq!(super::liveness_probe(State(st)).await, StatusCode::SERVICE_UNAVAILABLE);
+        let st = shared(HealthState {
+            liveness: HealthStatus::Unhealthy,
+            readiness: HealthStatus::Unhealthy,
+            last_message_processed: None,
+        });
+        assert_eq!(
+            super::liveness_probe(State(st)).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[tokio::test]
     async fn readiness_ok_only_when_healthy() {
         let st = shared(HealthState::default());
         // default is Starting -> 503
-        assert_eq!(super::readiness_probe(State(st.clone())).await, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            super::readiness_probe(State(st.clone())).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
 
         {
             let mut w = st.write().await;
@@ -139,7 +156,10 @@ mod tests {
     async fn startup_ok_only_when_healthy() {
         let st = shared(HealthState::default());
         // default is Starting -> 503
-        assert_eq!(super::startup_probe(State(st.clone())).await, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            super::startup_probe(State(st.clone())).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
 
         {
             let mut w = st.write().await;

@@ -46,7 +46,8 @@ mod tests {
         for (k, _) in std::env::vars() {
             // Only clear the vars we might read to avoid surprising the environment
             match k.as_str() {
-                "SOURCE_DSN" | "SOURCE_QUEUE" | "TARGET_DSN" | "TARGET_EXCHANGE" | "TARGET_ROUTING_KEY" | "HEALTH_PORT" => {
+                "SOURCE_DSN" | "SOURCE_QUEUE" | "TARGET_DSN" | "TARGET_EXCHANGE"
+                | "TARGET_ROUTING_KEY" | "HEALTH_PORT" => {
                     unsafe { std::env::remove_var(k) };
                 }
                 _ => {}
