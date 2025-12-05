@@ -1,5 +1,6 @@
 use crate::conf::Config;
 use crate::health::{HealthStatus, SharedHealthState};
+use crate::transform::{Message, MessageTransformer};
 use anyhow::{Context, Error};
 use futures::StreamExt;
 use lapin::message::Delivery;
@@ -8,11 +9,14 @@ use lapin::options::{
 };
 use lapin::publisher_confirm::PublisherConfirm;
 use lapin::types::{DeliveryTag, FieldTable};
-use lapin::{Channel, Connection, ConnectionProperties, Consumer};
+use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tracing::{error, info, warn};
 
+/// A bridge that consumes messages from a source AMQP queue and republishes
+/// them to a target exchange, optionally applying a transformer.
 pub struct MessageBridge {
     source_channel: Channel,
     target_channel: Channel,
@@ -20,6 +24,7 @@ pub struct MessageBridge {
     target_connection: Connection,
     config: Config,
     health_state: SharedHealthState,
+    transformer: Option<Arc<dyn MessageTransformer>>,
 }
 
 impl MessageBridge {
@@ -173,7 +178,17 @@ impl MessageBridge {
         Err(anyhow::anyhow!("Exhausted all connection retries."))
     }
 
-    pub async fn new(config: Config, health_state: SharedHealthState) -> anyhow::Result<Self> {
+    /// Create and initialize a new `MessageBridge`, establishing AMQP
+    /// connections and channels to the source and target.
+    ///
+    /// # Errors
+    /// Returns an error if connecting to AMQP servers or creating channels
+    /// fails for either the source or target connections.
+    pub async fn new(
+        config: Config,
+        health_state: SharedHealthState,
+        transformer: Option<Arc<dyn MessageTransformer>>,
+    ) -> anyhow::Result<Self> {
         // Mark as starting
         {
             let mut state = health_state.write().await;
@@ -232,6 +247,7 @@ impl MessageBridge {
             target_connection: target_conn,
             config,
             health_state,
+            transformer,
         })
     }
 
@@ -373,7 +389,7 @@ impl MessageBridge {
         message_count: &mut u64,
     ) -> Result<(), Error> {
         let data = delivery.data.clone();
-        let properties = delivery.properties.clone();
+        let properties: BasicProperties = delivery.properties.clone();
         let message_size = data.len();
         let delivery_tag = delivery.delivery_tag;
         let message_preview = Self::create_message_preview(&data);
@@ -386,6 +402,25 @@ impl MessageBridge {
             preview = %message_preview,
             "Received message"
         );
+
+        // Optionally transform message before publishing
+        let (data, properties) = if let Some(transformer) = &self.transformer {
+            match transformer.transform(Message { data, properties }).await {
+                Ok(Message { data, properties }) => (data, properties),
+                Err(e) => {
+                    error!(
+                        event = "transform_failed",
+                        delivery_tag = delivery_tag,
+                        error = %e,
+                        "Message transform failed; nacking and requeueing"
+                    );
+                    self.handle_nack(&delivery, delivery_tag).await?;
+                    return Ok(());
+                }
+            }
+        } else {
+            (data, properties)
+        };
 
         // Publish to target
         match self
@@ -466,6 +501,12 @@ impl MessageBridge {
         Ok(())
     }
 
+    /// Start consuming messages from the source queue and publishing them to
+    /// the target exchange until an error occurs or the consumer stream ends.
+    ///
+    /// # Errors
+    /// Returns an error if consumption, acknowledgement, negative-acknowledgement,
+    /// message transformation, or publishing to the target exchange fails.
     pub async fn run(&self) -> anyhow::Result<()> {
         info!(
             event = "consumer_starting",

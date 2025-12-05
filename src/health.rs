@@ -74,6 +74,11 @@ async fn startup_probe(State(health_state): State<SharedHealthState>) -> StatusC
     }
 }
 
+/// Run an HTTP health server exposing liveness, readiness and startup probes.
+///
+/// # Errors
+/// Returns an error if the TCP listener cannot bind to the specified `port`
+/// or if the HTTP server fails while serving requests.
 pub async fn run_health_server(port: u16, health_state: SharedHealthState) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(liveness_probe))

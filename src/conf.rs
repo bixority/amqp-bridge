@@ -11,6 +11,14 @@ pub struct Config {
 }
 
 impl Config {
+    /// Build a configuration from environment variables.
+    ///
+    /// Required variables: `SOURCE_DSN`, `TARGET_DSN`.
+    /// Optional variables: `SOURCE_QUEUE`, `TARGET_EXCHANGE`, `TARGET_ROUTING_KEY`, `HEALTH_PORT`.
+    ///
+    /// # Errors
+    /// Returns an error if required environment variables are missing or if
+    /// `HEALTH_PORT` cannot be parsed to a valid `u16` when provided.
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             source_dsn: std::env::var("SOURCE_DSN")

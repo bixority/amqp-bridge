@@ -12,6 +12,7 @@ pub enum LogFormat {
 }
 
 impl LogFormat {
+    #[must_use]
     pub fn from_env() -> Self {
         match std::env::var("LOG_FORMAT")
             .unwrap_or_else(|_| "json".to_string())
@@ -112,7 +113,11 @@ where
             }
         }
 
-        writeln!(writer, "{}", serde_json::to_string(&log_json).unwrap())?;
+        let line = serde_json::to_string(&log_json).unwrap_or_else(|_| {
+            // Fallback minimal line if serialization fails unexpectedly
+            "{\"msg\":\"log serialization failed\"}".to_string()
+        });
+        writeln!(writer, "{line}")?;
         Ok(())
     }
 }
@@ -212,14 +217,18 @@ mod tests {
 
     #[test]
     fn default_is_python_json() {
-        let _g = lock_env().lock().unwrap();
+        let _g = lock_env()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unset_log_format();
         assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
     }
 
     #[test]
     fn json_is_python_json_case_insensitive() {
-        let _g = lock_env().lock().unwrap();
+        let _g = lock_env()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe { std::env::set_var("LOG_FORMAT", "JSON") };
         assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
 
@@ -229,7 +238,9 @@ mod tests {
 
     #[test]
     fn unknown_values_are_pretty() {
-        let _g = lock_env().lock().unwrap();
+        let _g = lock_env()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe { std::env::set_var("LOG_FORMAT", "pretty") };
         assert_eq!(LogFormat::from_env(), LogFormat::Pretty);
 
