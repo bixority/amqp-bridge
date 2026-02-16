@@ -7,9 +7,8 @@ use lapin::message::Delivery;
 use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions, BasicQosOptions,
 };
-use lapin::publisher_confirm::PublisherConfirm;
-use lapin::types::{DeliveryTag, FieldTable};
-use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer};
+use lapin::types::{DeliveryTag, FieldTable, ShortString};
+use lapin::{Channel, Confirmation, Connection, ConnectionProperties, Consumer};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -25,6 +24,8 @@ pub struct MessageBridge {
     config: Config,
     health_state: SharedHealthState,
     transformer: Option<Arc<dyn MessageTransformer>>,
+    target_exchange: ShortString,
+    target_routing_key: ShortString,
 }
 
 impl MessageBridge {
@@ -240,6 +241,9 @@ impl MessageBridge {
             state.readiness = HealthStatus::Healthy;
         }
 
+        let target_exchange = ShortString::from(config.target_exchange.clone());
+        let target_routing_key = ShortString::from(config.target_routing_key.clone());
+
         Ok(Self {
             source_channel,
             target_channel,
@@ -248,6 +252,8 @@ impl MessageBridge {
             config,
             health_state,
             transformer,
+            target_exchange,
+            target_routing_key,
         })
     }
 
@@ -349,14 +355,14 @@ impl MessageBridge {
     /// Handles publisher confirmation
     async fn handle_publish_confirmation(
         &self,
-        confirm: PublisherConfirm,
+        confirm: Confirmation,
         delivery: &Delivery,
         delivery_tag: DeliveryTag,
         message_size: usize,
         message_count: &mut u64,
     ) -> Result<(), Error> {
-        match confirm.await {
-            Ok(_) => {
+        match confirm {
+            Confirmation::Ack(_) | Confirmation::NotRequested => {
                 info!(
                     event = "message_published",
                     delivery_tag = delivery_tag,
@@ -369,12 +375,11 @@ impl MessageBridge {
                 self.handle_ack(delivery, delivery_tag, message_count)
                     .await?;
             }
-            Err(e) => {
+            Confirmation::Nack(_) => {
                 error!(
-                    event = "publish_confirmation_failed",
+                    event = "publish_nack",
                     delivery_tag = delivery_tag,
-                    error = %e,
-                    "Publisher confirmation failed"
+                    "Broker nacked published message"
                 );
                 self.handle_nack(delivery, delivery_tag).await?;
             }
@@ -388,24 +393,26 @@ impl MessageBridge {
         delivery: Delivery,
         message_count: &mut u64,
     ) -> Result<(), Error> {
-        let data = delivery.data.clone();
-        let properties: BasicProperties = delivery.properties.clone();
-        let message_size = data.len();
+        let message_size = delivery.data.len();
         let delivery_tag = delivery.delivery_tag;
-        let message_preview = Self::create_message_preview(&data);
+        let message_preview = Self::create_message_preview(&delivery.data);
 
         info!(
             event = "message_received",
             message_size = message_size,
             delivery_tag = delivery_tag,
-            content_type = if std::str::from_utf8(&data).is_ok() { "text" } else { "binary" },
+            content_type = if std::str::from_utf8(&delivery.data).is_ok() { "text" } else { "binary" },
             preview = %message_preview,
             "Received message"
         );
 
         // Optionally transform message before publishing
         let (data, properties) = if let Some(transformer) = &self.transformer {
-            match transformer.transform(Message { data, properties }).await {
+            let input_message = Message {
+                data: delivery.data.clone(),
+                properties: delivery.properties.clone(),
+            };
+            match transformer.transform(input_message).await {
                 Ok(Message { data, properties }) => (data, properties),
                 Err(e) => {
                     error!(
@@ -419,22 +426,25 @@ impl MessageBridge {
                 }
             }
         } else {
-            (data, properties)
+            (delivery.data.clone(), delivery.properties.clone())
         };
 
         // Publish to target
         match self
             .target_channel
             .basic_publish(
-                &self.config.target_exchange,
-                &self.config.target_routing_key,
+                self.target_exchange.clone(),
+                self.target_routing_key.clone(),
                 BasicPublishOptions::default(),
                 &data,
                 properties,
             )
             .await
         {
-            Ok(confirm) => {
+            Ok(confirm_promise) => {
+                let confirm = confirm_promise
+                    .await
+                    .context("Failed to receive publish confirmation")?;
                 self.handle_publish_confirmation(
                     confirm,
                     &delivery,
@@ -518,8 +528,8 @@ impl MessageBridge {
         let consumer = self
             .source_channel
             .basic_consume(
-                &self.config.source_queue,
-                "bridge_consumer",
+                self.config.source_queue.clone().into(),
+                "bridge_consumer".into(),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             )
