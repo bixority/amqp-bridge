@@ -1,9 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use lapin::BasicProperties;
+use std::borrow::Cow;
 
-pub struct Message {
-    pub data: Vec<u8>,
+pub struct Message<'a> {
+    pub data: Cow<'a, [u8]>,
     pub properties: BasicProperties,
 }
 
@@ -15,5 +16,5 @@ pub trait MessageTransformer: Send + Sync {
     /// Implementations may return an error when transformation fails, e.g.
     /// invalid payloads, schema violations, or other application-specific
     /// conditions that prevent producing an output message.
-    async fn transform(&self, input: Message) -> Result<Message>;
+    async fn transform<'a>(&self, input: Message<'a>) -> Result<Message<'a>>;
 }

@@ -9,6 +9,7 @@ use lapin::options::{
 };
 use lapin::types::{DeliveryTag, FieldTable, ShortString};
 use lapin::{Channel, Confirmation, Connection, ConnectionProperties, Consumer};
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -291,16 +292,16 @@ impl MessageBridge {
     }
 
     /// Creates a preview of message content for logging
-    fn create_message_preview(data: &[u8]) -> String {
+    fn create_message_preview(data: &[u8]) -> Cow<'_, str> {
         match std::str::from_utf8(data) {
             Ok(s) => {
                 if s.len() > 200 {
-                    format!("{}...", &s[..200])
+                    Cow::Owned(format!("{}...", &s[..200]))
                 } else {
-                    s.to_string()
+                    Cow::Borrowed(s)
                 }
             }
-            Err(_) => "<binary data>".to_string(),
+            Err(_) => Cow::Borrowed("<binary data>"),
         }
     }
 
@@ -407,36 +408,41 @@ impl MessageBridge {
         );
 
         // Optionally transform message before publishing
-        let (data, properties) = if let Some(transformer) = &self.transformer {
-            let input_message = Message {
-                data: delivery.data.clone(),
-                properties: delivery.properties.clone(),
-            };
-            match transformer.transform(input_message).await {
-                Ok(Message { data, properties }) => (data, properties),
-                Err(e) => {
-                    error!(
-                        event = "transform_failed",
-                        delivery_tag = delivery_tag,
-                        error = %e,
-                        "Message transform failed; nacking and requeueing"
-                    );
-                    self.handle_nack(&delivery, delivery_tag).await?;
-                    return Ok(());
+        let (data_cow, properties): (Cow<'_, [u8]>, lapin::BasicProperties) =
+            if let Some(transformer) = &self.transformer {
+                let input_message = Message {
+                    data: Cow::Borrowed(delivery.data.as_slice()),
+                    properties: delivery.properties.clone(),
+                };
+                match transformer.transform(input_message).await {
+                    Ok(transformed) => (transformed.data, transformed.properties),
+                    Err(e) => {
+                        error!(
+                            event = "transform_failed",
+                            delivery_tag = delivery_tag,
+                            error = %e,
+                            "Message transform failed; nacking and requeueing"
+                        );
+                        self.handle_nack(&delivery, delivery_tag).await?;
+                        return Ok(());
+                    }
                 }
-            }
-        } else {
-            (delivery.data.clone(), delivery.properties.clone())
-        };
+            } else {
+                // No transform: avoid cloning payload; only clone properties as required by API
+                (
+                    Cow::Borrowed(delivery.data.as_slice()),
+                    delivery.properties.clone(),
+                )
+            };
 
-        // Publish to target
+        // Publish to target (payload by slice, properties by value)
         match self
             .target_channel
             .basic_publish(
                 self.target_exchange.clone(),
                 self.target_routing_key.clone(),
                 BasicPublishOptions::default(),
-                &data,
+                &data_cow,
                 properties,
             )
             .await
