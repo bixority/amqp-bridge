@@ -92,11 +92,12 @@ where
         // Append error fields matching Python's exc_type / exc_value / exc_traceback.
         // Present only when the event carries an error field.
         if let Some(err) = error
-            && let Some(obj) = log_json.as_object_mut() {
-                obj.insert("exc_type".to_string(), json!(err.exc_type));
-                obj.insert("exc_value".to_string(), json!(err.value));
-                obj.insert("exc_traceback".to_string(), json!(err.traceback));
-            }
+            && let Some(obj) = log_json.as_object_mut()
+        {
+            obj.insert("exc_type".to_string(), json!(err.exc_type));
+            obj.insert("exc_value".to_string(), json!(err.value));
+            obj.insert("exc_traceback".to_string(), json!(err.traceback));
+        }
 
         // Remaining custom fields (all non-error, non-message fields).
         if let Some(obj) = log_json.as_object_mut() {
