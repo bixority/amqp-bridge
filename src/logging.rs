@@ -160,16 +160,6 @@ impl tracing::field::Visit for FieldVisitor<'_> {
         }
     }
 
-    /// The richest error path: called when the field value is `&dyn std::error::Error`.
-    ///
-    /// Usage in call sites:
-    /// ```rust
-    /// // Preferred — gives full source chain and a real type name prefix:
-    /// tracing::error!(err = &*my_error as &dyn std::error::Error, "something failed");
-    ///
-    /// // Also works but gives a shallower type name (Display-only, no source chain):
-    /// tracing::error!(err = %my_error, "something failed");
-    /// ```
     fn record_error(
         &mut self,
         field: &tracing::field::Field,
