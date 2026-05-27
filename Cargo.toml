@@ -18,11 +18,20 @@ tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "fm
 url = "2.5.8"
 
 [profile.dev]
+debug = true
 incremental = true
+opt-level = 0
 
 [profile.release]
 codegen-units = 1
 debug = false
 lto = "fat"
-opt-level = "z"
+opt-level = 3
+panic = "abort"
+strip = true
+
+[profile.release.package."*"]
+codegen-units = 1
+debug = false
+opt-level = 3
 strip = true
