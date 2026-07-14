@@ -329,11 +329,7 @@ impl MessageBridge {
     }
 
     /// Handles negative acknowledgment (requeue)
-    async fn handle_nack(
-        &self,
-        acker: &Acker,
-        delivery_tag: DeliveryTag,
-    ) -> Result<(), Error> {
+    async fn handle_nack(&self, acker: &Acker, delivery_tag: DeliveryTag) -> Result<(), Error> {
         if let Err(e) = acker
             .nack(BasicNackOptions {
                 requeue: true,
@@ -373,8 +369,7 @@ impl MessageBridge {
                     "Successfully published message"
                 );
 
-                self.handle_ack(acker, delivery_tag, message_count)
-                    .await?;
+                self.handle_ack(acker, delivery_tag, message_count).await?;
             }
             Confirmation::Nack(_) => {
                 error!(
