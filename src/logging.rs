@@ -14,8 +14,15 @@ pub enum LogFormat {
 impl LogFormat {
     #[must_use]
     pub fn from_env() -> Self {
-        match std::env::var("LOG_FORMAT")
-            .unwrap_or_else(|_| "json".to_string())
+        Self::from_get_var(|k| std::env::var(k).ok())
+    }
+
+    fn from_get_var<F>(get_var: F) -> Self
+    where
+        F: FnOnce(&str) -> Option<String>,
+    {
+        match get_var("LOG_FORMAT")
+            .unwrap_or_else(|| "json".to_string())
             .to_lowercase()
             .as_str()
         {
@@ -273,45 +280,37 @@ pub fn init_logging(format: LogFormat) {
 mod tests {
     use super::*;
     use std::error::Error;
-    use std::sync::{Mutex, OnceLock};
-
-    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-    fn lock_env() -> &'static Mutex<()> {
-        ENV_MUTEX.get_or_init(|| Mutex::new(()))
-    }
-    fn unset_log_format() {
-        unsafe { std::env::remove_var("LOG_FORMAT") };
-    }
 
     #[test]
     fn default_is_python_json() {
-        let _g = lock_env()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        unset_log_format();
-        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
+        assert_eq!(
+            LogFormat::from_get_var(|_| None),
+            LogFormat::PythonJson
+        );
     }
 
     #[test]
     fn json_is_python_json_case_insensitive() {
-        let _g = lock_env()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        unsafe { std::env::set_var("LOG_FORMAT", "JSON") };
-        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
-        unsafe { std::env::set_var("LOG_FORMAT", "json") };
-        assert_eq!(LogFormat::from_env(), LogFormat::PythonJson);
+        assert_eq!(
+            LogFormat::from_get_var(|_| Some("JSON".to_string())),
+            LogFormat::PythonJson
+        );
+        assert_eq!(
+            LogFormat::from_get_var(|_| Some("json".to_string())),
+            LogFormat::PythonJson
+        );
     }
 
     #[test]
     fn unknown_values_are_pretty() {
-        let _g = lock_env()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        unsafe { std::env::set_var("LOG_FORMAT", "pretty") };
-        assert_eq!(LogFormat::from_env(), LogFormat::Pretty);
-        unsafe { std::env::set_var("LOG_FORMAT", "anything") };
-        assert_eq!(LogFormat::from_env(), LogFormat::Pretty);
+        assert_eq!(
+            LogFormat::from_get_var(|_| Some("pretty".to_string())),
+            LogFormat::Pretty
+        );
+        assert_eq!(
+            LogFormat::from_get_var(|_| Some("anything".to_string())),
+            LogFormat::Pretty
+        );
     }
 
     /// Minimal error types for testing the cause chain logic.
