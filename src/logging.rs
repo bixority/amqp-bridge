@@ -283,10 +283,7 @@ mod tests {
 
     #[test]
     fn default_is_python_json() {
-        assert_eq!(
-            LogFormat::from_get_var(|_| None),
-            LogFormat::PythonJson
-        );
+        assert_eq!(LogFormat::from_get_var(|_| None), LogFormat::PythonJson);
     }
 
     #[test]
