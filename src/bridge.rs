@@ -8,7 +8,7 @@ use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions, BasicQosOptions,
 };
 use lapin::types::{DeliveryTag, FieldTable, ShortString};
-use lapin::{Channel, Confirmation, Connection, ConnectionProperties, Consumer};
+use lapin::{Acker, Channel, Confirmation, Connection, ConnectionProperties, Consumer};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -242,8 +242,8 @@ impl MessageBridge {
             state.readiness = HealthStatus::Healthy;
         }
 
-        let target_exchange = ShortString::from(config.target_exchange.clone());
-        let target_routing_key = ShortString::from(config.target_routing_key.clone());
+        let target_exchange = ShortString::from(config.target_exchange.as_str());
+        let target_routing_key = ShortString::from(config.target_routing_key.as_str());
 
         Ok(Self {
             source_channel,
@@ -308,11 +308,11 @@ impl MessageBridge {
     /// Handles acknowledgment after successful publish
     async fn handle_ack(
         &self,
-        delivery: &Delivery,
+        acker: &Acker,
         delivery_tag: DeliveryTag,
         message_count: &mut u64,
     ) -> Result<(), Error> {
-        if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+        if let Err(e) = acker.ack(BasicAckOptions::default()).await {
             error!(
                 event = "ack_failed",
                 delivery_tag = delivery_tag,
@@ -331,10 +331,10 @@ impl MessageBridge {
     /// Handles negative acknowledgment (requeue)
     async fn handle_nack(
         &self,
-        delivery: &Delivery,
+        acker: &Acker,
         delivery_tag: DeliveryTag,
     ) -> Result<(), Error> {
-        if let Err(e) = delivery
+        if let Err(e) = acker
             .nack(BasicNackOptions {
                 requeue: true,
                 multiple: false,
@@ -357,7 +357,7 @@ impl MessageBridge {
     async fn handle_publish_confirmation(
         &self,
         confirm: Confirmation,
-        delivery: &Delivery,
+        acker: &Acker,
         delivery_tag: DeliveryTag,
         message_size: usize,
         message_count: &mut u64,
@@ -373,7 +373,7 @@ impl MessageBridge {
                     "Successfully published message"
                 );
 
-                self.handle_ack(delivery, delivery_tag, message_count)
+                self.handle_ack(acker, delivery_tag, message_count)
                     .await?;
             }
             Confirmation::Nack(_) => {
@@ -382,7 +382,7 @@ impl MessageBridge {
                     delivery_tag = delivery_tag,
                     "Broker nacked published message"
                 );
-                self.handle_nack(delivery, delivery_tag).await?;
+                self.handle_nack(acker, delivery_tag).await?;
             }
         }
         Ok(())
@@ -394,15 +394,22 @@ impl MessageBridge {
         delivery: Delivery,
         message_count: &mut u64,
     ) -> Result<(), Error> {
-        let message_size = delivery.data.len();
-        let delivery_tag = delivery.delivery_tag;
-        let message_preview = Self::create_message_preview(&delivery.data);
+        let Delivery {
+            data,
+            properties,
+            delivery_tag,
+            acker,
+            ..
+        } = delivery;
+
+        let message_size = data.len();
+        let message_preview = Self::create_message_preview(&data);
 
         info!(
             event = "message_received",
             message_size = message_size,
             delivery_tag = delivery_tag,
-            content_type = if std::str::from_utf8(&delivery.data).is_ok() { "text" } else { "binary" },
+            content_type = if std::str::from_utf8(&data).is_ok() { "text" } else { "binary" },
             preview = %message_preview,
             "Received message"
         );
@@ -411,8 +418,8 @@ impl MessageBridge {
         let (data_cow, properties): (Cow<'_, [u8]>, lapin::BasicProperties) =
             if let Some(transformer) = &self.transformer {
                 let input_message = Message {
-                    data: Cow::Borrowed(delivery.data.as_slice()),
-                    properties: delivery.properties.clone(),
+                    data: Cow::Borrowed(&data),
+                    properties,
                 };
                 match transformer.transform(input_message).await {
                     Ok(transformed) => (transformed.data, transformed.properties),
@@ -423,16 +430,13 @@ impl MessageBridge {
                             error = %e,
                             "Message transform failed; nacking and requeueing"
                         );
-                        self.handle_nack(&delivery, delivery_tag).await?;
+                        self.handle_nack(&acker, delivery_tag).await?;
                         return Ok(());
                     }
                 }
             } else {
-                // No transform: avoid cloning payload; only clone properties as required by API
-                (
-                    Cow::Borrowed(delivery.data.as_slice()),
-                    delivery.properties.clone(),
-                )
+                // No transform: avoid cloning payload and properties
+                (Cow::Borrowed(&data), properties)
             };
 
         // Publish to target (payload by slice, properties by value)
@@ -453,7 +457,7 @@ impl MessageBridge {
                     .context("Failed to receive publish confirmation")?;
                 self.handle_publish_confirmation(
                     confirm,
-                    &delivery,
+                    &acker,
                     delivery_tag,
                     message_size,
                     message_count,
@@ -469,7 +473,7 @@ impl MessageBridge {
                     error = %e,
                     "Failed to publish message"
                 );
-                self.handle_nack(&delivery, delivery_tag).await?;
+                self.handle_nack(&acker, delivery_tag).await?;
             }
         }
 
@@ -534,7 +538,7 @@ impl MessageBridge {
         let consumer = self
             .source_channel
             .basic_consume(
-                self.config.source_queue.clone().into(),
+                self.config.source_queue.as_str().into(),
                 "bridge_consumer".into(),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),

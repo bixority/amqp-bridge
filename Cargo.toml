@@ -17,6 +17,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "fmt"] }
 url = "2.5.8"
 
+[lints.rust]
+linker_messages = "allow"
+unsafe_code = "forbid"
+
 [profile.dev]
 debug = true
 incremental = true
