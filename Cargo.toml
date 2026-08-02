@@ -6,7 +6,7 @@ description = "AMQP bridge"
 license = "AGPL-3.0-only"
 
 [dependencies]
-thiserror = "2.0.11"
+thiserror = "2.0.19"
 async-trait = "0.1.91"
 axum = "0.8.9"
 futures = "0.3.33"
