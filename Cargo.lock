@@ -76,12 +76,12 @@ dependencies = [
 name = "amqp-bridge"
 version = "0.2.17"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
  "futures",
  "lapin",
  "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

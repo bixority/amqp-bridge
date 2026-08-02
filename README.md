@@ -146,13 +146,13 @@ Implement a transformer and run the bridge:
 
 ```rust
 use std::sync::Arc;
-use anyhow::Result;
 use amqp_bridge::{
     Config,
     HealthState,
     MessageBridge,
     MessageTransformer,
     Message,
+    BridgeResult,
 };
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -161,18 +161,18 @@ struct MyTransformer;
 
 #[async_trait]
 impl MessageTransformer for MyTransformer {
-    async fn transform(&self, input: Message) -> Result<Message> {
+    async fn transform<'a>(&self, input: Message<'a>) -> BridgeResult<Message<'a>> {
         // Example: uppercase the body if it's UTF-8
-        let data = match String::from_utf8(input.data) {
-            Ok(s) => s.to_uppercase().into_bytes(),
-            Err(e) => e.into_bytes(),
+        let data = match String::from_utf8(input.data.to_vec()) {
+            Ok(s) => std::borrow::Cow::Owned(s.to_uppercase().into_bytes()),
+            Err(e) => std::borrow::Cow::Owned(e.into_bytes()),
         };
         Ok(Message { data, properties: input.properties })
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> BridgeResult<()> {
     // Load config from env the same way the binary does
     let config = Config::from_env()?;
     let health_state = Arc::new(RwLock::new(HealthState::default()));
@@ -199,11 +199,12 @@ use amqp_bridge::{
     HealthState,
     run_with_ctrl_c,
     MessageTransformer,
+    BridgeResult,
 };
 use tokio::sync::RwLock;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> BridgeResult<()> {
     let config = Config::from_env()?;
     let health_state = Arc::new(RwLock::new(HealthState::default()));
     let transformer: Arc<dyn MessageTransformer> = Arc::new(MyTransformer);
@@ -226,11 +227,11 @@ amqp-bridge = { git = "https://github.com/bixority/amqp-bridge" }
 To run with pass-through behavior (no transform), just don't pass a transformer:
 
 ```rust
-use amqp_bridge::{Config, HealthState, run_with_ctrl_c};
+use amqp_bridge::{Config, HealthState, run_with_ctrl_c, BridgeResult};
 use tokio::sync::RwLock;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> BridgeResult<()> {
     let config = Config::from_env()?;
     let health_state = Arc::new(RwLock::new(HealthState::default()));
     // None means: do not transform; forward as-is

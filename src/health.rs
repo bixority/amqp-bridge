@@ -1,4 +1,4 @@
-use anyhow::Context;
+use crate::error::{BridgeError, Result};
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -79,7 +79,7 @@ async fn startup_probe(State(health_state): State<SharedHealthState>) -> StatusC
 /// # Errors
 /// Returns an error if the TCP listener cannot bind to the specified `port`
 /// or if the HTTP server fails while serving requests.
-pub async fn run_health_server(port: u16, health_state: SharedHealthState) -> anyhow::Result<()> {
+pub async fn run_health_server(port: u16, health_state: SharedHealthState) -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(liveness_probe))
         .route("/ready", get(readiness_probe))
@@ -89,13 +89,16 @@ pub async fn run_health_server(port: u16, health_state: SharedHealthState) -> an
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .context("Failed to bind health server")?;
+        .map_err(|source| BridgeError::IoWithContext {
+            context: "Failed to bind health server".to_string(),
+            source,
+        })?;
 
     info!("Health check server listening on {}", addr);
 
     axum::serve(listener, app)
         .await
-        .context("Health server error")?;
+        .map_err(|e| BridgeError::HealthServer(format!("Health server error: {e}")))?;
 
     Ok(())
 }

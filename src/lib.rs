@@ -1,10 +1,12 @@
 pub mod bridge;
 pub mod conf;
+pub mod error;
 pub mod health;
 pub mod logging;
 pub mod transform;
 
-use anyhow::{Context, Result};
+use crate::error::Result;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -12,6 +14,7 @@ use tracing::{error, info, warn};
 
 pub use crate::bridge::MessageBridge;
 pub use crate::conf::Config;
+pub use crate::error::{BridgeError, Result as BridgeResult};
 pub use crate::health::{HealthState, HealthStatus, SharedHealthState, run_health_server};
 pub use crate::logging::{LogFormat, init_logging};
 pub use crate::transform::{Message, MessageTransformer};
@@ -136,7 +139,7 @@ where
                 error = ?result,
                 "Health server failed"
             );
-            result.context("Health server failed")?;
+            result.map_err(|e| BridgeError::HealthServer(format!("Health server failed: {e}")))?;
         }
         result = &mut bridge => {
             error!(
@@ -144,7 +147,7 @@ where
                 error = ?result,
                 "Bridge failed"
             );
-            result.context("Bridge failed")?;
+            result.map_err(|e| BridgeError::HealthServer(format!("Bridge failed: {e}")))?;
         }
         () = &mut shutdown => {
             info!(

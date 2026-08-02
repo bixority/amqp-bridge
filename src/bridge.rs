@@ -1,7 +1,7 @@
 use crate::conf::Config;
 use crate::health::{HealthStatus, SharedHealthState};
 use crate::transform::{Message, MessageTransformer};
-use anyhow::{Context, Error};
+use crate::error::{BridgeError, Result};
 use futures::StreamExt;
 use lapin::message::Delivery;
 use lapin::options::{
@@ -111,7 +111,7 @@ impl MessageBridge {
 
     /// Attempts to connect to a `AMQP` instance,
     /// retrying up to 10 times with exponential backoff.
-    async fn connect_with_retry(uri: &str, context_msg: &str) -> anyhow::Result<Connection> {
+    async fn connect_with_retry(uri: &str, context_msg: &str) -> Result<Connection> {
         const MAX_RETRIES: u8 = 10;
         const INITIAL_DELAY: Duration = Duration::from_secs(1);
         const MAX_DELAY: Duration = Duration::from_secs(30);
@@ -170,14 +170,19 @@ impl MessageBridge {
                             status = "failed",
                             "Exhausted all connection retries"
                         );
-                        return Err(e).context(format!(
-                            "{context_msg} after {MAX_RETRIES} attempts to {sanitized_uri}",
-                        ));
+                        return Err(BridgeError::AmqpWithContext {
+                            context: format!(
+                                "{context_msg} after {MAX_RETRIES} attempts to {sanitized_uri}",
+                            ),
+                            source: e,
+                        });
                     }
                 }
             }
         }
-        Err(anyhow::anyhow!("Exhausted all connection retries."))
+        Err(BridgeError::ConnectionRetriesExhausted(
+            "Exhausted all connection retries.".to_string(),
+        ))
     }
 
     /// Create and initialize a new `MessageBridge`, establishing AMQP
@@ -190,7 +195,7 @@ impl MessageBridge {
         config: Config,
         health_state: SharedHealthState,
         transformer: Option<Arc<dyn MessageTransformer>>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         // Mark as starting
         {
             let mut state = health_state.write().await;
@@ -208,27 +213,48 @@ impl MessageBridge {
         info!("Connecting to SOURCE AMQP");
         let source_conn = Self::connect_with_retry(&config.source_dsn, "source_amqp")
             .await
-            .context("Source AMQP connection failed")?;
+            .map_err(|e| match e {
+                BridgeError::Amqp(source) => BridgeError::AmqpWithContext {
+                    context: "Source AMQP connection failed".to_string(),
+                    source,
+                },
+                _ => e,
+            })?;
 
         let source_channel = source_conn
             .create_channel()
             .await
-            .context("Failed to create source channel")?;
+            .map_err(|source| BridgeError::AmqpWithContext {
+                context: "Failed to create source channel".to_string(),
+                source,
+            })?;
 
         info!("Connecting to TARGET AMQP");
         let target_conn = Self::connect_with_retry(&config.target_dsn, "target_amqp")
             .await
-            .context("Target AMQP connection failed")?;
+            .map_err(|e| match e {
+                BridgeError::Amqp(source) => BridgeError::AmqpWithContext {
+                    context: "Target AMQP connection failed".to_string(),
+                    source,
+                },
+                _ => e,
+            })?;
 
         let target_channel = target_conn
             .create_channel()
             .await
-            .context("Failed to create target channel")?;
+            .map_err(|source| BridgeError::AmqpWithContext {
+                context: "Failed to create target channel".to_string(),
+                source,
+            })?;
 
         source_channel
             .basic_qos(1, BasicQosOptions::default())
             .await
-            .context("Failed to set QoS")?;
+            .map_err(|source| BridgeError::AmqpWithContext {
+                context: "Failed to set QoS".to_string(),
+                source,
+            })?;
 
         info!(
             status = "initialized",
@@ -311,7 +337,7 @@ impl MessageBridge {
         acker: &Acker,
         delivery_tag: DeliveryTag,
         message_count: &mut u64,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         if let Err(e) = acker.ack(BasicAckOptions::default()).await {
             error!(
                 event = "ack_failed",
@@ -320,7 +346,7 @@ impl MessageBridge {
                 "Failed to acknowledge message"
             );
             self.mark_unhealthy().await;
-            return Err(anyhow::anyhow!("Failed to ack: {e}"));
+            return Err(BridgeError::AckError(e.to_string()));
         }
 
         *message_count += 1;
@@ -329,7 +355,7 @@ impl MessageBridge {
     }
 
     /// Handles negative acknowledgment (requeue)
-    async fn handle_nack(&self, acker: &Acker, delivery_tag: DeliveryTag) -> Result<(), Error> {
+    async fn handle_nack(&self, acker: &Acker, delivery_tag: DeliveryTag) -> Result<()> {
         if let Err(e) = acker
             .nack(BasicNackOptions {
                 requeue: true,
@@ -344,7 +370,7 @@ impl MessageBridge {
                 "Failed to nack message"
             );
             self.mark_unhealthy().await;
-            return Err(anyhow::anyhow!("Failed to nack: {e}"));
+            return Err(BridgeError::NackError(e.to_string()));
         }
         Ok(())
     }
@@ -357,7 +383,7 @@ impl MessageBridge {
         delivery_tag: DeliveryTag,
         message_size: usize,
         message_count: &mut u64,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match confirm {
             Confirmation::Ack(_) | Confirmation::NotRequested => {
                 info!(
@@ -388,7 +414,7 @@ impl MessageBridge {
         &self,
         delivery: Delivery,
         message_count: &mut u64,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let Delivery {
             data,
             properties,
@@ -449,7 +475,7 @@ impl MessageBridge {
             Ok(confirm_promise) => {
                 let confirm = confirm_promise
                     .await
-                    .context("Failed to receive publish confirmation")?;
+                    .map_err(|e| BridgeError::PublishConfirmationError(e.to_string()))?;
                 self.handle_publish_confirmation(
                     confirm,
                     &acker,
@@ -475,7 +501,7 @@ impl MessageBridge {
         Ok(())
     }
 
-    async fn consume(&self, mut consumer: Consumer) -> Result<(), Error> {
+    async fn consume(&self, mut consumer: Consumer) -> Result<()> {
         let mut message_count: u64 = 0;
 
         while let Some(delivery_result) = consumer.next().await {
@@ -487,7 +513,7 @@ impl MessageBridge {
                     "Connection lost, stopping consumer loop"
                 );
                 self.mark_unhealthy().await;
-                return Err(anyhow::anyhow!("Connection lost during message processing"));
+                return Err(BridgeError::ConnectionLost);
             }
 
             match delivery_result {
@@ -502,7 +528,7 @@ impl MessageBridge {
                         "Error receiving message"
                     );
                     self.mark_unhealthy().await;
-                    return Err(anyhow::anyhow!("Consumer error: {e}"));
+                    return Err(BridgeError::ConsumerError(e.to_string()));
                 }
             }
         }
@@ -522,7 +548,7 @@ impl MessageBridge {
     /// # Errors
     /// Returns an error if consumption, acknowledgement, negative-acknowledgement,
     /// message transformation, or publishing to the target exchange fails.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self) -> Result<()> {
         info!(
             event = "consumer_starting",
             queue = %self.config.source_queue,
@@ -539,7 +565,10 @@ impl MessageBridge {
                 FieldTable::default(),
             )
             .await
-            .context("Failed to start consuming")?;
+            .map_err(|source| BridgeError::AmqpWithContext {
+                context: "Failed to start consuming".to_string(),
+                source,
+            })?;
 
         info!(
             event = "consumer_started",
@@ -554,7 +583,7 @@ impl MessageBridge {
             "Consumer stream ended unexpectedly"
         );
         self.mark_unhealthy().await;
-        Err(anyhow::anyhow!("Consumer stream ended unexpectedly"))
+        Err(BridgeError::ConsumerStreamEnded)
     }
 }
 
