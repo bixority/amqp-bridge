@@ -1,7 +1,7 @@
 use crate::conf::Config;
+use crate::error::{BridgeError, Result};
 use crate::health::{HealthStatus, SharedHealthState};
 use crate::transform::{Message, MessageTransformer};
-use crate::error::{BridgeError, Result};
 use futures::StreamExt;
 use lapin::message::Delivery;
 use lapin::options::{
@@ -221,13 +221,14 @@ impl MessageBridge {
                 _ => e,
             })?;
 
-        let source_channel = source_conn
-            .create_channel()
-            .await
-            .map_err(|source| BridgeError::AmqpWithContext {
-                context: "Failed to create source channel".to_string(),
-                source,
-            })?;
+        let source_channel =
+            source_conn
+                .create_channel()
+                .await
+                .map_err(|source| BridgeError::AmqpWithContext {
+                    context: "Failed to create source channel".to_string(),
+                    source,
+                })?;
 
         info!("Connecting to TARGET AMQP");
         let target_conn = Self::connect_with_retry(&config.target_dsn, "target_amqp")
@@ -240,13 +241,14 @@ impl MessageBridge {
                 _ => e,
             })?;
 
-        let target_channel = target_conn
-            .create_channel()
-            .await
-            .map_err(|source| BridgeError::AmqpWithContext {
-                context: "Failed to create target channel".to_string(),
-                source,
-            })?;
+        let target_channel =
+            target_conn
+                .create_channel()
+                .await
+                .map_err(|source| BridgeError::AmqpWithContext {
+                    context: "Failed to create target channel".to_string(),
+                    source,
+                })?;
 
         source_channel
             .basic_qos(1, BasicQosOptions::default())
@@ -410,11 +412,7 @@ impl MessageBridge {
     }
 
     /// Processes a single message delivery
-    async fn process_message(
-        &self,
-        delivery: Delivery,
-        message_count: &mut u64,
-    ) -> Result<()> {
+    async fn process_message(&self, delivery: Delivery, message_count: &mut u64) -> Result<()> {
         let Delivery {
             data,
             properties,

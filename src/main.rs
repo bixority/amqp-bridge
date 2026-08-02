@@ -3,7 +3,9 @@ use tokio::sync::RwLock;
 
 use tracing::info;
 
-use amqp_bridge::{BridgeError, BridgeResult, Config, HealthState, LogFormat, init_logging, run_with_ctrl_c};
+use amqp_bridge::{
+    BridgeError, BridgeResult, Config, HealthState, LogFormat, init_logging, run_with_ctrl_c,
+};
 
 #[tokio::main]
 /// CLI entry point that initializes logging, loads config, and runs the bridge
@@ -20,7 +22,8 @@ async fn main() -> BridgeResult<()> {
 
     info!(event = "cli_start", log_format = ?log_format, "CLI starting");
 
-    let config = Config::from_env().map_err(|e| BridgeError::Config(format!("Failed to load configuration: {e}")))?;
+    let config = Config::from_env()
+        .map_err(|e| BridgeError::Config(format!("Failed to load configuration: {e}")))?;
 
     let health_state = Arc::new(RwLock::new(HealthState::default()));
 

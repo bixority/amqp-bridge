@@ -28,11 +28,13 @@ impl Config {
         F: Fn(&str) -> Option<String>,
     {
         Ok(Self {
-            source_dsn: get_var("SOURCE_DSN")
-                .ok_or_else(|| BridgeError::Config("SOURCE_DSN environment variable not set".to_string()))?,
+            source_dsn: get_var("SOURCE_DSN").ok_or_else(|| {
+                BridgeError::Config("SOURCE_DSN environment variable not set".to_string())
+            })?,
             source_queue: get_var("SOURCE_QUEUE").unwrap_or_else(|| "old".to_string()),
-            target_dsn: get_var("TARGET_DSN")
-                .ok_or_else(|| BridgeError::Config("TARGET_DSN environment variable not set".to_string()))?,
+            target_dsn: get_var("TARGET_DSN").ok_or_else(|| {
+                BridgeError::Config("TARGET_DSN environment variable not set".to_string())
+            })?,
             target_exchange: get_var("TARGET_EXCHANGE").unwrap_or_else(|| "new_xchg".to_string()),
             target_routing_key: get_var("TARGET_ROUTING_KEY")
                 .unwrap_or_else(|| "update".to_string()),
