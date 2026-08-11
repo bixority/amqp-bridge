@@ -9,7 +9,7 @@ license = "AGPL-3.0-only"
 thiserror = "2.0.20"
 async-trait = "0.1.92"
 axum = "0.8.9"
-futures = "0.3.33"
+futures = "0.3.34"
 lapin = "4.10.0"
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
