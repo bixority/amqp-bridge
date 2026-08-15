@@ -2,7 +2,7 @@ name: amqp-bridge
 
 services:
   old-rabbitmq-service:
-    image: docker.io/library/rabbitmq:4.3.0-management
+    image: docker.io/library/rabbitmq:4.3.4-management
     container_name: old-rabbitmq-service
     environment:
       RABBITMQ_ERLANG_COOKIE: 'secret_cookie'
@@ -16,7 +16,7 @@ services:
     command: [ "bash", "-c", "/rabbitmq_init.sh" ]
 
   new-rabbitmq-service:
-    image: docker.io/library/rabbitmq:4.3.0-management
+    image: docker.io/library/rabbitmq:4.3.4-management
     container_name: new-rabbitmq-service
     environment:
       RABBITMQ_ERLANG_COOKIE: 'secret_cookie'
