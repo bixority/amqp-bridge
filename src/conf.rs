@@ -42,7 +42,7 @@ impl Config {
                 .unwrap_or_else(|| "update".to_string()),
             health_service_port: get_var("HEALTH_SERVICE_PORT")
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(9000),
+                .unwrap_or(8080),
             health_service_addr: get_var("HEALTH_SERVICE_ADDR")
                 .unwrap_or_else(|| "0.0.0.0".to_string()),
         })
