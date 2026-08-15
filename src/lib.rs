@@ -113,17 +113,23 @@ where
         source_queue = %config.source_queue,
         target_exchange = %config.target_exchange,
         target_routing_key = %config.target_routing_key,
-        health_port = config.health_port,
+        health_listen_ip = %config.health_service_addr,
+        health_port = config.health_service_port,
         "Configuration loaded"
     );
 
     // Start health check server
     info!(
         event = "health_server_starting",
-        port = config.health_port,
+        listen_ip = %config.health_service_addr,
+        port = config.health_service_port,
         "Starting health check server"
     );
-    let health_server = run_health_server(config.health_port, health_state.clone());
+    let health_server = run_health_server(
+        config.health_service_addr.clone(),
+        config.health_service_port,
+        health_state.clone(),
+    );
 
     // Start message bridge with recovery
     let bridge = run_with_recovery(config, health_state, transformer);

@@ -2,19 +2,21 @@ use crate::error::{BridgeError, Result};
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub health_service_addr: String,
+    pub health_service_port: u16,
     pub source_dsn: String,
     pub source_queue: String,
     pub target_dsn: String,
     pub target_exchange: String,
     pub target_routing_key: String,
-    pub health_port: u16,
 }
 
 impl Config {
     /// Build a configuration from environment variables.
     ///
     /// Required variables: `SOURCE_DSN`, `TARGET_DSN`.
-    /// Optional variables: `SOURCE_QUEUE`, `TARGET_EXCHANGE`, `TARGET_ROUTING_KEY`, `HEALTH_PORT`.
+    /// Optional variables: `SOURCE_QUEUE`, `TARGET_EXCHANGE`, `TARGET_ROUTING_KEY`,
+    /// `HEALTH_SERVICE_PORT`, `HEALTH_SERVICE_ADDR`.
     ///
     /// # Errors
     /// Returns an error if required environment variables are missing or if
@@ -38,9 +40,11 @@ impl Config {
             target_exchange: get_var("TARGET_EXCHANGE").unwrap_or_else(|| "new_xchg".to_string()),
             target_routing_key: get_var("TARGET_ROUTING_KEY")
                 .unwrap_or_else(|| "update".to_string()),
-            health_port: get_var("HEALTH_PORT")
+            health_service_port: get_var("HEALTH_SERVICE_PORT")
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8080),
+            health_service_addr: get_var("HEALTH_SERVICE_ADDR")
+                .unwrap_or_else(|| "0.0.0.0".to_string()),
         })
     }
 }
@@ -85,7 +89,8 @@ mod tests {
         assert_eq!(cfg.source_queue, "old");
         assert_eq!(cfg.target_exchange, "new_xchg");
         assert_eq!(cfg.target_routing_key, "update");
-        assert_eq!(cfg.health_port, 8080);
+        assert_eq!(cfg.health_service_port, 8080);
+        assert_eq!(cfg.health_service_addr, "0.0.0.0");
         Ok(())
     }
 
@@ -98,13 +103,15 @@ mod tests {
         env.insert("TARGET_EXCHANGE", "ex1");
         env.insert("TARGET_ROUTING_KEY", "rk1");
         env.insert("HEALTH_PORT", "9000");
+        env.insert("HEALTH_LISTEN_IP", "127.0.0.1");
         let get_var = |k: &str| env.get(k).map(ToString::to_string);
 
         let cfg = Config::from_get_var(get_var)?;
         assert_eq!(cfg.source_queue, "q1");
         assert_eq!(cfg.target_exchange, "ex1");
         assert_eq!(cfg.target_routing_key, "rk1");
-        assert_eq!(cfg.health_port, 9000);
+        assert_eq!(cfg.health_service_port, 9000);
+        assert_eq!(cfg.health_service_addr, "127.0.0.1");
         Ok(())
     }
 }
