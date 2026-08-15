@@ -42,7 +42,7 @@ impl Config {
                 .unwrap_or_else(|| "update".to_string()),
             health_service_port: get_var("HEALTH_SERVICE_PORT")
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(8080),
+                .unwrap_or(9000),
             health_service_addr: get_var("HEALTH_SERVICE_ADDR")
                 .unwrap_or_else(|| "0.0.0.0".to_string()),
         })
@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(cfg.source_queue, "old");
         assert_eq!(cfg.target_exchange, "new_xchg");
         assert_eq!(cfg.target_routing_key, "update");
-        assert_eq!(cfg.health_service_port, 8080);
+        assert_eq!(cfg.health_service_port, 9000);
         assert_eq!(cfg.health_service_addr, "0.0.0.0");
         Ok(())
     }
