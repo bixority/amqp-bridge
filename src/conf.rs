@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(cfg.source_queue, "old");
         assert_eq!(cfg.target_exchange, "new_xchg");
         assert_eq!(cfg.target_routing_key, "update");
-        assert_eq!(cfg.health_service_port, 9000);
+        assert_eq!(cfg.health_service_port, 8080);
         assert_eq!(cfg.health_service_addr, "0.0.0.0");
         Ok(())
     }
@@ -102,8 +102,8 @@ mod tests {
         env.insert("SOURCE_QUEUE", "q1");
         env.insert("TARGET_EXCHANGE", "ex1");
         env.insert("TARGET_ROUTING_KEY", "rk1");
-        env.insert("HEALTH_PORT", "9000");
-        env.insert("HEALTH_LISTEN_IP", "127.0.0.1");
+        env.insert("HEALTH_SERVICE_PORT", "9000");
+        env.insert("HEALTH_SERVICE_ADDR", "127.0.0.1");
         let get_var = |k: &str| env.get(k).map(ToString::to_string);
 
         let cfg = Config::from_get_var(get_var)?;
