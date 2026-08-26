@@ -1,4 +1,4 @@
-FROM --platform=$TARGETOS/$TARGETARCH rust:1.97-slim-trixie AS build-image
+FROM --platform=$TARGETOS/$TARGETARCH rust:1.98-slim-trixie AS build-image
 LABEL org.opencontainers.image.description="AMQP bridge"
 LABEL authors="Olegs Korsaks"
 
