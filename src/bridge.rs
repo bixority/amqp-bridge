@@ -134,7 +134,10 @@ impl MessageBridge {
                 "Attempting connection"
             );
 
-            match Connection::connect(uri, ConnectionProperties::default()).await {
+            let properties =
+                ConnectionProperties::default().with_connection_name("amqp-bridge".into());
+
+            match Connection::connect(uri, properties).await {
                 Ok(conn) => {
                     info!(
                         target = context_msg,
