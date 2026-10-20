@@ -1,6 +1,6 @@
 [package]
 name = "amqp-bridge"
-version = "0.3.8"
+version = "0.3.9"
 rust-version = "1.99"
 edition = "2024"
 description = "AMQP bridge"
@@ -11,9 +11,9 @@ thiserror = "2.0.21"
 async-trait = "0.1.92"
 axum = "0.8.9"
 futures = "0.3.34"
-lapin = "4.12.2"
+lapin = "4.12.3"
 serde_json = "1.0.154"
-tokio = { version = "1.53.3", features = ["full"] }
+tokio = { version = "1.54.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "fmt"] }
 url = "2.5.8"
